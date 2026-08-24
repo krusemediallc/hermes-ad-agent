@@ -25,7 +25,7 @@ A note before you start: Hermes will never spend money without asking you first.
 
 Say to Hermes (paste the repo link you got with this guide):
 
-> Set up the Hermes Ad Agent skill pack from this repo: [REPO URL]. Read its SETUP.md and follow it step by step. Check in with me at each checkpoint.
+> Set up the Hermes Ad Agent skill pack from this repo: https://github.com/krusemediallc/hermes-ad-agent. Read its SETUP.md and follow it step by step. Check in with me at each checkpoint.
 
 Hermes will clone the repo, install every skill, and then move on to connecting the two MCP servers (next two chapters are part of the same guided setup).
 

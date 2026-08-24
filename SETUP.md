@@ -45,7 +45,7 @@ If you were given a GitHub URL for this repo:
 
 ```bash
 cd ~
-git clone <REPO_URL> hermes-ad-agent
+git clone https://github.com/krusemediallc/hermes-ad-agent.git hermes-ad-agent
 cd hermes-ad-agent
 ls skills/
 ```
@@ -54,7 +54,7 @@ If `git` is unavailable, download and unpack the archive instead. Note that GitH
 
 ```bash
 cd ~
-curl -L -o hermes-ad-agent.zip <REPO_URL>/archive/refs/heads/main.zip
+curl -L -o hermes-ad-agent.zip https://github.com/krusemediallc/hermes-ad-agent/archive/refs/heads/main.zip
 unzip hermes-ad-agent.zip
 mv hermes-ad-agent-main hermes-ad-agent
 cd hermes-ad-agent
@@ -77,18 +77,18 @@ The two install routes below leave the skills in different-looking places, and t
 
 ```bash
 # one skill at a time, path maps repo path -> skill:
-hermes skills install <owner>/<repo>/skills/<skill-name>
+hermes skills install krusemediallc/hermes-ad-agent/skills/<skill-name>
 ```
 
 Or register the whole repo as a tap and install from it:
 
 ```bash
-hermes skills tap add <owner>/<repo>
+hermes skills tap add krusemediallc/hermes-ad-agent
 hermes skills search ad
-hermes skills install <owner>/<repo>/<skill-name>
+hermes skills install krusemediallc/hermes-ad-agent/<skill-name>
 ```
 
-Repeat `hermes skills install` for every folder you saw in `skills/` in Step 1. You can preview any skill first with `hermes skills inspect <owner>/<repo>/<skill-name>`. Community installs show a third-party warning panel on first install; that is expected, show it to the user rather than suppressing it.
+Repeat `hermes skills install` for every folder you saw in `skills/` in Step 1. You can preview any skill first with `hermes skills inspect krusemediallc/hermes-ad-agent/<skill-name>`. Community installs show a third-party warning panel on first install; that is expected, show it to the user rather than suppressing it.
 
 **Fallback: copy the folders.** If the hub install is unavailable in your build, or you only have a local copy of the repo, copy each skill folder into your skills directory:
 
