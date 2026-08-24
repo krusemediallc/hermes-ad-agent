@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# The user's personal brand file (created at the repo root by the brand-setup skill).
+# Only the root-level BRAND.md is ignored; the demo file in assets/demo-brand/ stays tracked.
+/BRAND.md
+
+# Generated creatives and downloads
+outputs/
+
+# Logs
+*.log
+
+# Python
+__pycache__/
