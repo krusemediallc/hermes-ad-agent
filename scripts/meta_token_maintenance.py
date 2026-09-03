@@ -33,8 +33,10 @@ Outcome vocabulary (the last stdout line is always "Outcome: <NAME>"):
                         file changed underneath (compare-and-swap), key line missing or
                         duplicated, or a post-write check failed.
 
-Headline status for cron reports (status_compat): SUCCESS when RENEWED or when a
-REPLACED_SAME_EXPIRY candidate was actually written; otherwise the outcome name.
+Headline status for cron reports (status_compat, four values): SUCCESS when RENEWED or
+when a REPLACED_SAME_EXPIRY candidate was actually written; NO_CHANGE when a same-expiry
+candidate was left unwritten (the detail line still says REPLACED_SAME_EXPIRY);
+otherwise REAUTH_REQUIRED or FAILED.
 
 Post-write checks: a direct MCP initialize + tools/list with the new token, and with
 --hermes-test also "hermes mcp test <server>" through the bridge. If Meta rejects the
@@ -433,8 +435,9 @@ class Maintainer:
         if not have_app:
             self.note("app credentials not set: debug_token used the token as its own access_token")
 
-        # 1. Which token do we exchange? The current long-lived one, or the handoff token a human left.
-        info_t, source = None, current
+        # 1. Which token do we exchange? A valid handoff token a human left wins (that is what the line is
+        #    for); otherwise the current long-lived token. Describe the current token whenever it is usable.
+        info_t, source, use_handoff = None, current, False
         if current:
             try:
                 info_t = self.inspect(current, app_id, app_secret, "current")
@@ -445,13 +448,27 @@ class Maintainer:
                 self.note("current token unusable (%s); trying the handoff token in %s" % (stop.message, a.handoff_var))
         elif not handoff:
             raise Stop("REAUTH_REQUIRED", "no token in env file (%s in %s)" % (a.token_var, env_file))
-        if info_t is None:
+        if handoff:
             if not have_app:
-                raise Stop("REAUTH_REQUIRED", "a handoff token is present but %s/%s are not set, so it cannot be "
-                                              "exchanged" % (a.app_id_var, a.app_secret_var))
-            self.inspect(handoff, app_id, app_secret, "handoff")
+                if info_t is None:
+                    raise Stop("REAUTH_REQUIRED", "a handoff token is present but %s/%s are not set, so it cannot "
+                                                  "be exchanged" % (a.app_id_var, a.app_secret_var))
+                self.note("handoff token present but %s/%s are not set; it cannot be exchanged" % (a.app_id_var, a.app_secret_var))
+            else:
+                try:
+                    self.inspect(handoff, app_id, app_secret, "handoff")
+                    use_handoff = True
+                except Stop as stop:
+                    if info_t is None:
+                        raise
+                    self.note("handoff token in %s is unusable (%s); continuing with the current token"
+                              % (a.handoff_var, stop.message))
+        if use_handoff:
             r["via_handoff"], source = True, handoff
             self.note("exchanging the handoff token from %s" % a.handoff_var)
+        elif info_t is None:
+            raise Stop("REAUTH_REQUIRED", "no usable token: %s is missing or invalid and no handoff token is usable"
+                       % a.token_var)
         elif not have_app:
             raise Stop("NO_CHANGE", "exchange skipped: %s/%s not set" % (a.app_id_var, a.app_secret_var))
 
@@ -550,7 +567,12 @@ class Maintainer:
         low = r["days_remaining"] is not None and r["days_remaining"] < a.min_days
         unwritten_same = outcome == "REPLACED_SAME_EXPIRY" and not r["written"]
         r["exit_code"] = 2 if outcome not in HEALTHY else (1 if unwritten_same or low else 0)
-        r["status_compat"] = "SUCCESS" if (outcome == "RENEWED" or (outcome == "REPLACED_SAME_EXPIRY" and r["written"])) else outcome
+        if outcome == "RENEWED" or (outcome == "REPLACED_SAME_EXPIRY" and r["written"]):
+            r["status_compat"] = "SUCCESS"
+        elif outcome == "REPLACED_SAME_EXPIRY":
+            r["status_compat"] = "NO_CHANGE"  # nothing was written; the detail line keeps the precise reason
+        else:
+            r["status_compat"] = outcome
         if outcome == "REAUTH_REQUIRED":
             r["next_steps"] = ("a human must mint a new short-lived USER token with all seven scopes for the configured "
                                "app, store it as %s in %s, and re-run this script; it exchanges it and writes %s "

@@ -351,12 +351,12 @@ class MaintenanceCase(unittest.TestCase):
         code, out = self.run_main(self.renew_graph(c_exp=T_EXP), mcp)
         self.assertEqual(code, 1)
         self.assertIn("Outcome: REPLACED_SAME_EXPIRY", out)
-        self.assertIn(row("status", "REPLACED_SAME_EXPIRY"), out)
+        self.assertIn(row("status", "NO_CHANGE"), out)  # headline: nothing was written
         self.assertEqual(self.read_env(), ENV_TEXT)
         self.assertEqual(mcp.calls, [])
         st = self.state()
         self.assertEqual(st["consecutive_non_advancing_runs"], 1)
-        self.assertEqual(st["status_compat"], "REPLACED_SAME_EXPIRY")
+        self.assertEqual(st["status_compat"], "NO_CHANGE")
 
     def test_one_day_advance_is_still_same_expiry(self):
         code, out = self.run_main(self.renew_graph(c_exp=T_EXP + DAY))
@@ -586,7 +586,8 @@ class MaintenanceCase(unittest.TestCase):
         self.assertEqual(self.env_values()["META_MCP_LONG_TOKEN"], TOKEN_C)
         self.assertEqual(self.env_values()["META_MCP_TOKEN"], "")
 
-    def test_handoff_ignored_when_current_token_is_valid(self):
+    def test_unusable_handoff_is_noted_and_current_token_is_used(self):
+        # the handoff line holds a token debug_token does not know: note it, carry on with the current token
         self.write_env(ENV_TEXT + HANDOFF_LINE)
         graph = self.renew_graph()
         code, data, out = self.run_json(graph)
@@ -594,8 +595,20 @@ class MaintenanceCase(unittest.TestCase):
         self.assertEqual(data["outcome"], "RENEWED")
         self.assertFalse(data["via_handoff"])
         self.assertEqual(graph.exchanged(), [TOKEN_T])
-        self.assertNotIn(TOKEN_H, [q.get("input_token") for _, q in graph.calls])
+        self.assertTrue(any("unusable" in n for n in data["notes"]))
         self.assertEqual(self.read_env(), ENV_TEXT.replace(TOKEN_T, TOKEN_C) + HANDOFF_LINE)  # handoff line untouched
+
+    def test_valid_handoff_is_preferred_even_when_current_token_is_valid(self):
+        # a human deliberately placed a fresh token: exchange that one, write the long line, clear the handoff
+        self.write_env(ENV_TEXT + HANDOFF_LINE)
+        graph = self.handoff_graph(current_info=token_info())
+        code, data, out = self.run_json(graph)
+        self.assertEqual(code, 0)
+        self.assertEqual(data["outcome"], "RENEWED")
+        self.assertTrue(data["via_handoff"])
+        self.assertEqual(graph.exchanged(), [TOKEN_H])
+        self.assertEqual(self.env_values()["META_MCP_LONG_TOKEN"], TOKEN_C)
+        self.assertEqual(self.env_values()["META_MCP_TOKEN"], "")
 
     def test_bad_handoff_token_is_reauth_required(self):
         self.write_env(HANDOFF_ONLY_ENV)
@@ -1170,7 +1183,8 @@ class MaintenanceCase(unittest.TestCase):
         code, out = self.run_main(self.renew_graph(c_exp=T_EXP), extra=["--markdown"])
         self.assertEqual(code, 1)
         lines = out.splitlines()
-        self.assertEqual(lines[0], "# REPLACED_SAME_EXPIRY")
+        self.assertEqual(lines[0], "# NO_CHANGE")  # four-value headline: nothing was written
+        self.assertIn("- Outcome detail: REPLACED_SAME_EXPIRY", lines)
         self.assertIn("- Current expiry (UTC): %s" % mtm.iso(T_EXP), lines)
         self.assertIn("- Candidate expiry (UTC): %s" % mtm.iso(T_EXP), lines)
         self.assertIn("- Candidate differed: yes", lines)

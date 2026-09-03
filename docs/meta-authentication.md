@@ -172,13 +172,13 @@ Two scripts in `scripts/` turn the "replace the secret and restart" cycle into s
 
 ### The outcome vocabulary
 
-The report opens with a headline and an outcome detail. The headline is `SUCCESS` when the detail is `RENEWED` or a written `REPLACED_SAME_EXPIRY`; otherwise it repeats the detail:
+The report opens with a headline and an outcome detail. The headline has four values: `SUCCESS` when the detail is `RENEWED` or a written `REPLACED_SAME_EXPIRY`; `NO_CHANGE` when nothing was written (including an unwritten `REPLACED_SAME_EXPIRY`); otherwise `REAUTH_REQUIRED` or `FAILED`:
 
 | Headline | Detail | What happened | What the operator does | Exit code |
 |---|---|---|---|---|
 | `SUCCESS` | `RENEWED` | Meta returned a different token **and** the expiry advanced by more than a day; the new token was written and smoke-tested | Nothing. Read the new expiry from the report or the state file and update the date in BRAND.md at the next brand-setup update | `0` |
 | `SUCCESS` | `REPLACED_SAME_EXPIRY` | Meta returned a different token string with the same expiry and it was written because `--replace-same-expiry` was passed | Nothing. The rotation path is proven; the deadline has not moved | `0` |
-| `REPLACED_SAME_EXPIRY` | `REPLACED_SAME_EXPIRY` | Meta returned a different token string but the expiry did not advance; **not written** (the default); the old token stays valid | Nothing now. This is not a renewal and buys no time. Watch days remaining and plan the reauthorization before the date | `1` |
+| `NO_CHANGE` | `REPLACED_SAME_EXPIRY` | Meta returned a different token string but the expiry did not advance; **not written** (the default); the old token stays valid | Nothing now. This is not a renewal and buys no time. Watch days remaining and plan the reauthorization before the date | `1` |
 | `NO_CHANGE` | `NO_CHANGE` | The same token came back, or the candidate's expiry was shorter than the current one (retained, never written), or the exchange was skipped because `META_APP_ID` / `META_APP_SECRET` are absent | Nothing while days remaining is at or above `--min-days` (default 21) | `0` (`1` under `--min-days`) |
 | `REAUTH_REQUIRED` | `REAUTH_REQUIRED` | The token is invalid or expired, or Meta refused the exchange | Generate a new short-lived USER token with the seven scopes from the same app, put it on the `META_MCP_TOKEN` handoff line in the terminal, and run the script again; it exchanges, writes, clears the handoff line, and tests. No restart on the bridge transport | `2` |
 | `FAILED` | `FAILED` | The lock was held; the candidate was not a USER token, missed a scope, or came from another app; the `META_MCP_LONG_TOKEN` line was missing or duplicated; the compare-and-swap found the line changed underneath; or the write, smoke test, or Hermes test failed | Read the redacted reason and the "Credential replaced" line (rolled back only on a Meta `401`/`403`; otherwise the validated candidate stays), re-run once; if it persists, check the env file by hand: presence, mode `0600`, exactly one long-token line | `2` |

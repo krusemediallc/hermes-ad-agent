@@ -278,7 +278,7 @@ fewer than `--min-days` remaining); `2` `REAUTH_REQUIRED` or `FAILED`.
 delivers (the first line is the headline described above):
 
 ```
-# SUCCESS | REPLACED_SAME_EXPIRY | NO_CHANGE | REAUTH_REQUIRED | FAILED
+# SUCCESS | NO_CHANGE | REAUTH_REQUIRED | FAILED
 - Outcome detail: RENEWED | REPLACED_SAME_EXPIRY | NO_CHANGE | REAUTH_REQUIRED | FAILED
 - Current expiry (UTC): <timestamp or unavailable>
 - Candidate expiry (UTC): <timestamp or unavailable>

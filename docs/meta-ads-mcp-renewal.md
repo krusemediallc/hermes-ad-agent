@@ -40,10 +40,10 @@ Equal-expiry candidates are not written by default. For the first weeks on a new
 
 ## Status meanings
 
-The `--markdown` report opens with a headline, then a detail line. The headline is `SUCCESS` when the detail is `RENEWED` or a written `REPLACED_SAME_EXPIRY`; otherwise it repeats the detail, so an equal-expiry candidate left unwritten (the default) is headed `REPLACED_SAME_EXPIRY`:
+The `--markdown` report opens with a headline, then a detail line. The headline has four values: `SUCCESS` when the detail is `RENEWED` or a written `REPLACED_SAME_EXPIRY`; `NO_CHANGE` when nothing was written, which includes an equal-expiry candidate left unwritten (the default, with `REPLACED_SAME_EXPIRY` on the detail line); otherwise `REAUTH_REQUIRED` or `FAILED`:
 
 ```
-# SUCCESS | REPLACED_SAME_EXPIRY | NO_CHANGE | REAUTH_REQUIRED | FAILED
+# SUCCESS | NO_CHANGE | REAUTH_REQUIRED | FAILED
 - Outcome detail: RENEWED | REPLACED_SAME_EXPIRY | NO_CHANGE | REAUTH_REQUIRED | FAILED
 - Current expiry (UTC): <timestamp or unavailable>
 - Candidate expiry (UTC): <timestamp or unavailable>
@@ -75,7 +75,7 @@ Exit codes: `0` healthy (`SUCCESS`, or `NO_CHANGE` with at least `--min-days` re
 
 ## Expected no-change behavior
 
-A `NO_CHANGE` headline, or a `REPLACED_SAME_EXPIRY` headline with "Credential replaced: no", is the normal weekly result and is not a skipped attempt. The script always inspects the current token and, when the app credentials are present, always asks Meta for an exchange. Meta decides what comes back: the same token, a new string with the same expiry, or a new string with a later expiry. On the one observed re-exchange Meta returned an equal-expiry token, and whether a re-exchange ever advances a long-lived user token's expiry is unverified; this pack does not claim it does.
+A `NO_CHANGE` headline (with `NO_CHANGE` or `REPLACED_SAME_EXPIRY` on the detail line and "Credential replaced: no") is the normal weekly result and is not a skipped attempt. The script always inspects the current token and, when the app credentials are present, always asks Meta for an exchange. Meta decides what comes back: the same token, a new string with the same expiry, or a new string with a later expiry. On the one observed re-exchange Meta returned an equal-expiry token, and whether a re-exchange ever advances a long-lived user token's expiry is unverified; this pack does not claim it does.
 
 So, week by week:
 
