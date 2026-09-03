@@ -84,6 +84,7 @@ before any tool call or CLI command that generates media or touches Meta.
 
 | Stage | Invoke | Artifact (and where it lives) | Gate before the next stage |
 |---|---|---|---|
+| 0. Account audit (onboarding, then refresh on request) | `account-audit` | `memory/accounts/act_<ACCOUNT_ID>.md` at the workspace root; link it from `run-log.md` | None to approve (the audit is read-only); Create and Copy read its learnings before generating |
 | 1. Brief | this skill (you) | `brief.md` in the run folder | User confirms the brief |
 | 2. Research (optional) | `competitor-ad-research` | `research/BRIEF-<date>.md` at the workspace root; link it from `run-log.md` | User selects which angles or references to carry forward |
 | 3. Create | `nano-banana-image-ad`, `chatgpt-image-ad`, `image-ad-clone`, `ugc-video-ad`, `clone-video-ad`, `pixar-style-ad`, or `claymation-ad` | creative files under each skill's own `outputs/<skill>/<slug>/` folder; paths and Arcads asset IDs recorded in `run-log.md` | Credit estimate confirmed before generation; user selects the final assets |
@@ -107,6 +108,13 @@ the user:
 - creative direction: format (static image, UGC video, cinematic), how many
   ads, any references to imitate or avoid
 - rough budget intent, checked against the BRAND.md daily spend cap
+
+Also load the account memory: if `memory/accounts/act_<ACCOUNT_ID>.md`
+exists at the workspace root for the chosen ad account (the `account-audit`
+skill writes one per account at onboarding), read it now and note its path
+in `run-log.md`. If it is missing and a Meta backend is live, offer to run
+`account-audit` first (it is read-only); the campaign can proceed without
+it, but the Create and Copy stages lose the account's learnings.
 
 Write `brief.md` capturing the answers. **Gate:** the user confirms the brief.
 Do not generate anything before this.
@@ -147,6 +155,12 @@ Invoke the installed Arcads creative skill that matches the brief:
 Those skills own prompt craft, generation, polling, QA, and saving files;
 your job is to hand them the brief and enforce the gates.
 
+Before any generation, read the "## Learnings for New Ads" and
+"## Top Performers" sections of the account memory file loaded in Stage 1
+and pass what they say along with the brief: net-new creative should build
+on what the account already proved and avoid what it disproved. Skip this
+only when no memory file exists.
+
 **Gates (both live inside the creative skills; verify they happened):**
 
 - **Credit gate:** an estimated credit cost for the exact batch (model, count,
@@ -169,8 +183,11 @@ user selected it.
 ### Stage 4: Copy
 
 Invoke `human-ad-copy` with the brief, the selected creatives, and the voice
-and claims sections of `BRAND.md`. It produces primary text, headlines, and
-descriptions that sound human and stay inside the approved claims.
+and claims sections of `BRAND.md`. Also point it at the account memory file
+loaded in Stage 1; its "## Top Performers" and "## Creative and Copy
+Inventory" sections inform angle and phrasing, never claims. It produces
+primary text, headlines, and descriptions that sound human and stay inside
+the approved claims.
 
 Every factual claim in the copy must trace to the claims section of
 `BRAND.md` or to something the user stated in this conversation. Anything

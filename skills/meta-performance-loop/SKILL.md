@@ -92,6 +92,12 @@ calls from the Backend reference below.
   empty or all `(not set)`, offer to run brand-setup's update flow right now
   to fill in a target CPA or ROAS; you can still report raw numbers without
   it, but say the comparison-to-goal section is unavailable.
+- **Account memory (optional).** If `memory/accounts/act_<ACCOUNT_ID>.md`
+  exists at the workspace root for the account (the `account-audit` skill
+  writes it), read it for the account's audited 90-day baselines and note
+  the audit date; the report can then say how the current window compares
+  to them. No file means no baseline comparison; do not reconstruct one
+  from memory.
 
 ## Backend reference
 
@@ -217,6 +223,12 @@ from BRAND.md's "## Performance Targets" section and classify:
   CPA, or fewer than a handful of results, as insufficient, and tell the
   user that is the rule you applied so they can change it.
 
+When the account memory file exists, also compare the window against its
+audited baselines, labeled with the audit's date range. The baseline is
+context, not a target: BRAND.md's targets stay the pass/fail bar, and the
+baseline numbers came from the memory file rather than a live tool call in
+this session, so label them as the audit's numbers when you cite them.
+
 ### 4. Write the report
 
 Deliver it in this shape (also save it as a dated file under `reports/` in
@@ -274,6 +286,12 @@ number 2":
 
 If the user confirms an action, hand off to the right skill; do not perform
 mutations from inside this skill.
+
+After delivering the report, when the account memory file exists and the
+window's results have shifted materially from its baselines (or the audit
+date is months old), offer to refresh the file by running the
+`account-audit` skill; it is read-only on Meta and rewrites only the memory
+file. Never edit the memory file from inside this skill.
 
 ## Pitfalls
 

@@ -48,7 +48,7 @@ If any of these fail, tell the user what is missing before continuing. Your envi
 
 You need a local copy of this repository so you can read `skills/`, this file, and `docs/walkthrough.md`.
 
-**This clone directory is the workspace root.** The directory where this repo lands (default `~/hermes-ad-agent`) is the single working directory for everything the skill pack produces: `BRAND.md`, `research/`, `outputs/` (including the shared Arcads usage log at `outputs/arcads-usage-log.jsonl`), and `ad-runs/` all live at the workspace root. Every skill that mentions one of those paths means "relative to the workspace root". You will record its absolute path at the checkpoint below.
+**This clone directory is the workspace root.** The directory where this repo lands (default `~/hermes-ad-agent`) is the single working directory for everything the skill pack produces: `BRAND.md`, `research/`, `outputs/` (including the shared Arcads usage log at `outputs/arcads-usage-log.jsonl`), `memory/` (the per-account audit memory at `memory/accounts/`), and `ad-runs/` all live at the workspace root. Every skill that mentions one of those paths means "relative to the workspace root". You will record its absolute path at the checkpoint below.
 
 If Meta ends up connected through the Meta Ads CLI (Step 4, Route B), the CLI's `.env` file also lives at the workspace root, and `meta` commands are run from there so the file is picked up. This repo's `.gitignore` ignores `.env`, so the token in it is never committed.
 
@@ -256,19 +256,31 @@ meta ads adaccount list --output json
 meta ads page list --output json
 ```
 
-`meta auth status` prints the masked token. The second command lists the ad accounts the system user can see; the third lists the Facebook Pages. Show the user which accounts and Pages are visible and confirm they are the intended ones (`meta ads adaccount current` shows which single account the configuration points at). If an expected account or Page is missing, it was not assigned to the system user in step (b) 2. One gap to note now: the CLI has no Instagram account listing, so if the user wants ads to run under an Instagram identity, ask them for the Instagram account ID (Business Settings → Instagram accounts) so brand-setup can record it in Step 5.
+`meta auth status` prints the masked token. The second command lists the ad accounts the system user can see; the third lists the Facebook Pages. Show the user which accounts and Pages are visible and confirm they are the intended ones (`meta ads adaccount current` shows which single account the configuration points at). If an expected account or Page is missing, it was not assigned to the system user in step (b) 2. One gap to note now: the CLI has no Instagram account listing, so if the user wants ads to run under an Instagram identity, ask them for the Instagram account ID (Business Settings → Instagram accounts) so brand-setup can record it in Step 6.
 
 **Important warning to pass on to the user, on either route:** Meta's write operations, MCP tools and CLI commands alike, have no confirmation screen of their own. That is exactly why the skills in this pack enforce the paused-by-default and confirm-before-spend rules; do not bypass them.
 
-**Checkpoint 4:** EITHER `ads_get_ad_accounts` (Route A) OR `meta ads adaccount list --output json` (Route B) returns the user's ad accounts, and the user has confirmed they are the intended ones. Record which route is live (`mcp` or `cli`); you will hand that to brand-setup in Step 5, which writes it as the "Meta connection" line under `## Meta Assets` in `BRAND.md`.
+**Checkpoint 4:** EITHER `ads_get_ad_accounts` (Route A) OR `meta ads adaccount list --output json` (Route B) returns the user's ad accounts, and the user has confirmed they are the intended ones. Record which route is live (`mcp` or `cli`); the account audit in Step 5 records it in each memory file, and you will hand it to brand-setup in Step 6, which writes it as the "Meta connection" line under `## Meta Assets` in `BRAND.md`.
 
 ---
 
-## Step 5: Run the brand setup interview
+## Step 5: Account deep dive
+
+Run the **account-audit** skill (`/account-audit`) for every ad account the user wants Hermes managing. It is a strictly read-only 90-day deep dive over whichever Meta backend Checkpoint 4 found: it reads structure, settings, targeting, creatives, copy, and performance, and it never creates, updates, or activates anything on either backend. For each account it writes one memory file at `memory/accounts/act_<ACCOUNT_ID>.md` at the workspace root (the repo clone directory recorded in Checkpoint 1). Every creative, copy, and launch skill in this pack consults that memory before building net-new ads, so everything Hermes builds is informed by what already works in the account.
+
+If Checkpoint 4 surfaced more than one ad account, ask the user which accounts Hermes should manage and audit each of those, one at a time. Show the user each account's audit summary as it finishes. The memory files are user data: this repo's `.gitignore` ignores `memory/`, so they are never committed.
+
+**Skippable in two cases:** demo mode (no real Meta account behind the demo BRAND.md) and a brand-new ad account with no meaningful history to audit. In either case, skip the audit with a note to the user, never fabricate one, and record the skip at the checkpoint below. The user can run `/account-audit` any time later once the account has history.
+
+**Checkpoint 5:** one memory file per audited account exists at `memory/accounts/` (verify with `ls memory/accounts/`), and the user has seen each account's audit summary. If the audit was skipped (demo mode, or a brand-new empty account), record that here along with the reason.
+
+---
+
+## Step 6: Run the brand setup interview
 
 Run the **brand-setup** skill (`/brand-setup`). It interviews the user about their business and writes `BRAND.md` at the workspace root (the repo clone directory recorded in Checkpoint 1). Every other skill in this pack reads that file for brand voice, offer, audience, compliance notes, Meta assets, budget guardrails, and performance targets (a target CPA or target ROAS, which the reporting and performance skills use as their thresholds).
 
-Tell brand-setup which Meta route is live from Checkpoint 4. It records that under `## Meta Assets` as a "Meta connection" line (`mcp` or `cli`). Skills treat that line as a hint and still verify the live backend at runtime, so it never has to be perfect, but it saves a round of detection. On the CLI route it also needs the ad account ID, Page ID, and (if any) Instagram account ID you found in Step 4, since the CLI cannot look up Instagram accounts on its own.
+Tell brand-setup which Meta route is live from Checkpoint 4. It records that under `## Meta Assets` as a "Meta connection" line (`mcp` or `cli`). Skills treat that line as a hint and still verify the live backend at runtime, so it never has to be perfect, but it saves a round of detection. On the CLI route it also needs the ad account ID, Page ID, and (if any) Instagram account ID you found in Step 4, since the CLI cannot look up Instagram accounts on its own. If Step 5 produced account memory files, brand-setup can also draw on them (pixels, conversion events, observed defaults) instead of asking the user cold; point it at `memory/accounts/`.
 
 Every downstream skill checks for `BRAND.md` and offers to run brand-setup if it is missing, but doing it now means the user's first ad build just works.
 
@@ -282,38 +294,40 @@ cp assets/demo-brand/BRAND.md BRAND.md
 
 The demo BRAND.md points at the parody products in `<workspace root>/assets/demo-products/`, so image and video skills resolve reference images without any extra setup. One hard limit: the demo landing URL is a placeholder on example.com, and `meta-ad-launcher` checks for example.com URLs and refuses to create any ad until a real URL is supplied (Meta rejects example.com). So demo mode exercises research, creative, and copy end to end, but a launch still needs a real destination URL. When the user is ready for their real brand, run `/brand-setup`; it replaces the demo file.
 
-**Checkpoint 5:** `BRAND.md` exists at the workspace root (from the interview, or the demo copy), it includes Performance Targets (at least a target CPA or target ROAS), and the user has confirmed its contents look right. If it came from the interview, its `## Meta Assets` section names the Meta connection (`mcp` or `cli`) that matches Checkpoint 4.
+**Checkpoint 6:** `BRAND.md` exists at the workspace root (from the interview, or the demo copy), it includes Performance Targets (at least a target CPA or target ROAS), and the user has confirmed its contents look right. If it came from the interview, its `## Meta Assets` section names the Meta connection (`mcp` or `cli`) that matches Checkpoint 4.
 
 ---
 
-## Step 6: Offer reporting automations (optional but recommended)
+## Step 7: Offer reporting automations (optional but recommended)
 
 Ask the user whether they want scheduled performance reports and alerts. If yes, run the **ad-reporting-automations** skill (`/ad-reporting-automations`). It uses Hermes's built-in scheduler (cron jobs stored under `~/.hermes/cron/`) to run recurring insight pulls through the Meta backend (the MCP's `ads_insights_*` tools on Route A, or `meta ads insights get` on Route B) and deliver them wherever the user chats with you (Telegram, Discord, Slack, email, and so on, via the job's `deliver` target).
 
 Reporting jobs are read-only by design: they call insights and entity reads only. On the MCP that means `ads_insights_*` and `ads_get_*` tools; on the CLI it means `meta ads insights get` and `meta ads <resource> list|get`. They never call `ads_activate_entity`, `ads_update_entity`, or any `ads_create_*` tool, and never run `meta ads ... update --status ACTIVE`, `--daily-budget`, `create`, or `delete`. If the user declines, just note that they can run it later.
 
-**Checkpoint 6:** either a reporting job exists (verify with `/cron list` or `hermes cron list`) or the user has explicitly declined for now.
+**Checkpoint 7:** either a reporting job exists (verify with `/cron list` or `hermes cron list`) or the user has explicitly declined for now.
 
 ---
 
-## Step 7: Final self-test and report
+## Step 8: Final self-test and report
 
 Run this checklist and record the result of each item:
 
 1. **Meta backend live:** EITHER `ads_get_ad_accounts` (MCP) OR `meta ads adaccount list --output json` (CLI) returns accounts; note which one.
 2. **Arcads MCP live:** confirm `arcads_` tools are present in your tool list and one read-only call (such as `arcads_list_products` or `arcads_list_voices`) succeeds.
 3. **Skills discoverable:** list installed skills and confirm every folder from this repo's `skills/` directory is present and triggerable as a slash command.
-4. **BRAND.md exists at the workspace root** (from Step 5, real or demo).
-5. **Scheduler state:** note whether a reporting job was created (Step 6).
+4. **Account memory exists:** `memory/accounts/` at the workspace root contains one `act_<ACCOUNT_ID>.md` file per audited account (from Step 5), or Checkpoint 5 recorded why the audit was skipped (demo mode or a brand-new empty account).
+5. **BRAND.md exists at the workspace root** (from Step 6, real or demo).
+6. **Scheduler state:** note whether a reporting job was created (Step 7).
 
 Then **report to your user** in plain language:
 
 - Which skills you installed and what each one is for (one line each).
 - Which Meta route is connected (MCP or CLI) and which ad accounts it can see, and which Arcads account the Arcads MCP maps to.
+- Which ad accounts were audited into memory files at `memory/accounts/` (and which were skipped, with the reason).
 - The standing safety rules: everything is created paused, nothing is activated and no money is spent without their explicit confirmation, and Arcads generations always come with a credit estimate first.
 - Suggested first commands to try (for example: "research my competitors' ads", "make me 3 image ad concepts", "build and launch a paused campaign").
 
-**Checkpoint 7:** the user has seen and acknowledged that report. Setup is complete.
+**Checkpoint 8:** the user has seen and acknowledged that report. Setup is complete.
 
 ---
 

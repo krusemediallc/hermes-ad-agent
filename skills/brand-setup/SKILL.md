@@ -112,6 +112,27 @@ backend is connected, write `(not set)` there, note it in the file's
 "## Setup Gaps" section, and continue; the interview still works without
 it.
 
+**Account audit memory** (`memory/accounts/act_<ACCOUNT_ID>.md` at the
+workspace root, one file per ad account, written by the `account-audit`
+skill), once the default ad account is chosen:
+
+1. Check `memory/accounts/` for an audit file matching that account.
+   Running `account-audit` right after the Meta backend is connected,
+   before this interview, is the preferred order; if the file is missing
+   and a Meta backend is live, offer to run it now (it is strictly
+   read-only) and come back. If the user declines, continue without it.
+2. If the file exists, read its "## Account Snapshot" and
+   "## Settings Inventory" sections and pre-fill the "## Meta Assets"
+   answers from them: the pixel and conversion events actually in use and
+   the observed default campaign objective. Present each pre-fill as an
+   observed value from the audit for the user to confirm or correct, never
+   as already decided.
+3. From its "## Top Performers" and "## Account Snapshot" sections, propose
+   baseline Performance Targets (for example the account's 90-day CPA or
+   ROAS), labeled explicitly as observed numbers from the audit, not
+   goals. The user confirms, adjusts, or replaces them in Step 2 before
+   anything is written to BRAND.md.
+
 **Arcads MCP** (tools named `arcads_*`), if its tools exist in this session:
 
 1. `arcads_list_products` to see the products registered in the user's Arcads

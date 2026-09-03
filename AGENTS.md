@@ -1,6 +1,6 @@
 # For any agent working in this repo
 
-This is the **Hermes Ad Agent** skill pack: Meta ads research, creative generation (Arcads MCP), copywriting, launching and reporting (Meta Ads MCP server or Meta Ads CLI, either one), packaged as agent skills.
+This is the **Hermes Ad Agent** skill pack: Meta ads research, a read-only account audit that writes per-account memory files to `memory/accounts/` right after Meta is connected (before brand-setup), creative generation (Arcads MCP), copywriting, launching and reporting (Meta Ads MCP server or Meta Ads CLI, either one), packaged as agent skills.
 
 - **Asked to set this up / install it?** Read `SETUP.md` and follow it step by step. It is written to you.
 - **Skills** live in `skills/`, one self-contained folder per skill, each with a `SKILL.md` (agentskills.io format).

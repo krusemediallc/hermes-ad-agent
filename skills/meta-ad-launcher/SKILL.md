@@ -192,6 +192,15 @@ plan containing:
   gender; do not invent interests or custom audiences the user never asked
   for), and the conversion event plus pixel if optimizing for conversions
 
+If `memory/accounts/act_<ACCOUNT_ID>.md` exists at the workspace root for
+this account (the `account-audit` skill writes it), read its
+"## Structure Map" section before drafting the plan and follow the
+account's observed conventions: the naming pattern, CBO versus ABO, and
+the attribution setting. Say in the plan which choices came from the
+memory file; the user can override any of them. The default conversion
+event, objective, pixel, and CTA still come from BRAND.md's
+"## Meta Assets" as above.
+
 Then create both with **PAUSED** status:
 
 - **MCP:** call `ads_create_campaign`, then `ads_create_ad_set`. Check each

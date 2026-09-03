@@ -8,6 +8,9 @@
 # Generated creatives and downloads
 outputs/
 
+# Per-account audit memory written by the account-audit skill (user data, never commit)
+memory/
+
 # Logs
 *.log
 

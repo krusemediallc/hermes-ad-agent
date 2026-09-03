@@ -40,6 +40,15 @@ approved claims that feed the ledger below. If BRAND.md is missing, offer to run
 the brand-setup skill before drafting. You can draft without it, but say so and
 mark every brand-dependent fact as unverified.
 
+**Check the account memory next.** If `memory/accounts/act_<ACCOUNT_ID>.md`
+exists at the workspace root for the connected ad account (the
+`account-audit` skill writes one per account), read its "## Top Performers"
+and "## Creative and Copy Inventory" sections for proven angles, hooks, and
+phrasing patterns to draw on. The memory informs style and angle only.
+Claims still come only from the claim ledger built from BRAND.md and the
+user: a line of winning copy is not a receipt, and nothing from the memory
+file enters the copy as a claim.
+
 Ask only for missing facts that materially change the copy. If a draft can
 proceed with placeholders, use explicit brackets such as `[verified result]`.
 Never turn an assumption into a claim, and never fabricate a performance number.

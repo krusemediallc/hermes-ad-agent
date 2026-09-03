@@ -3,9 +3,11 @@ name: ad-reporting-automations
 description: >-
   Sets up the recurring Meta ads reporting and alerting suite on the Hermes
   scheduler: a daily morning performance digest, an hourly in-flight check
-  that stays quiet unless something notable happens, and threshold alerts for
+  that stays quiet unless something notable happens, threshold alerts for
   spend spikes, CPA breaches against the BRAND.md target, rejected or
-  disapproved ads, and account errors. It interviews the user about which
+  disapproved ads, and account errors, and an optional monthly
+  account-memory refresh that re-runs the read-only account-audit skill. It
+  interviews the user about which
   automations to enable, confirms thresholds, times, and delivery channel,
   creates the cron jobs with read-only prompts, then shows what was scheduled
   and how to change or remove it. Use it when the user says things like "set
@@ -68,6 +70,8 @@ deliver a message to the user. They observe and recommend. They never act.
   Never copy the token into the prompt.
 - **The `meta-performance-loop` skill installed.** The daily digest attaches
   it so the scheduled session reports the same way an on-demand ask does.
+  The optional monthly memory refresh needs the `account-audit` skill
+  installed the same way.
 - **BRAND.md** at the workspace root (the repo clone directory recorded
   during setup). The target CPA (or target ROAS) from its
   "## Performance Targets" section and the daily spend cap from
@@ -111,7 +115,7 @@ entity-level option; if there is none, list the ads with
 
 ### 1. Ask which automations to enable
 
-Offer the three, plainly:
+Offer the four, plainly:
 
 1. **Daily digest**: yesterday's performance plus recommendations, every
    morning.
@@ -119,6 +123,9 @@ Offer the three, plainly:
    quiet unless something notable happens.
 3. **Threshold alerts**: spend spike, CPA breach, rejected or disapproved ad,
    account errors.
+4. **Monthly account-memory refresh** (optional): re-runs the read-only
+   `account-audit` skill so `memory/accounts/act_<ACCOUNT_ID>.md` at the
+   workspace root stays current for the creative and copy skills.
 
 The user can pick any subset. If they already have jobs from a previous
 setup, list them first with your scheduler's list action so you extend
@@ -269,6 +276,32 @@ read-only, never call ads_activate_entity, ads_update_entity, or any
 ads_create_* tool, and never run any meta ads ... update, create, or delete
 command; never take corrective action yourself; report only what the Meta
 tools returned.
+```
+
+**(d) Monthly account-memory refresh** (optional), schedule example
+`0 6 1 * *` (the 1st of each month, adjusted for timezone), name
+`meta-account-memory-refresh`, same delivery target. If your scheduler
+supports attaching a skill to a job (verify against your scheduler's
+actual interface first, as with the digest), attach `account-audit`;
+otherwise the prompt below stands alone. The one file this job writes is
+the local memory file; toward Meta it is as read-only as the others:
+
+```text
+You are running a scheduled Meta account-memory refresh. Using the
+account-audit skill, re-run the READ-ONLY 90-day account audit for the ad
+account named in BRAND.md at <path> (its "## Meta Assets" section) and
+update memory/accounts/act_<ACCOUNT_ID>.md at <workspace root>. META
+BACKEND: if tools named ads_* exist in your tool list, use them; otherwise
+run the Meta Ads CLI from <workspace root> (it reads .env there) with
+--output json on every command. The audit reads Meta and rewrites only
+that local memory file; it changes nothing on Meta. When it finishes, send
+a short summary: the audit date, the backend used, and the 2 or 3 biggest
+changes since the previous audit (the file's "## Changelog" section lists
+them). HARD RULES: read-only on Meta, never call ads_activate_entity,
+ads_update_entity, or any ads_create_* tool, never run any meta ads ...
+update, create, or delete command, and never call any Arcads generation
+tool; report only what the Meta tools returned; if a tool or command
+fails, say so instead of guessing.
 ```
 
 ### 4. Show the user what exists now

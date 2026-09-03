@@ -71,6 +71,18 @@ Hermes installs the `meta-ads` package (it needs Python 3.12 or later), then tel
 
 One note on the two routes: competitor research (the Meta Ad Library) needs Route A; everything else in this guide works on both.
 
+### Teach Hermes your account history
+
+Once Meta is connected (either route), have Hermes study what your account has already done before it builds anything. Say:
+
+> Audit my ad account and build the account memory.
+
+Hermes runs a read-only deep dive of your last 90 days (structure, targeting, creatives, copy, winners, losers) and writes it to a memory file, one per ad account. It only reads; nothing in your account changes. This is the step that makes everything after it smarter: every new ad Hermes builds is informed by what already works in your account, from the hooks and audiences that convert to the fatigued ads not worth copying. The audit also feeds the brand interview in the next chapter, so brand-setup can confirm real defaults from your account instead of asking cold.
+
+If you're testing in demo mode, or your ad account is brand new with nothing in it, skip this for now; Hermes notes the skip and you can run the audit any time later.
+
+**Success looks like:** Hermes shows you a summary of the audit (top ads, spend, what's working and what's not) and confirms a memory file exists for each account you want it managing.
+
 ---
 
 ## Chapter 4: Connect the Arcads MCP

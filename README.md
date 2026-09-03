@@ -2,7 +2,7 @@
 
 **A media buyer brain for your Hermes agent.**
 
-Install this skill pack and your [Hermes agent](https://hermes-agent.nousresearch.com) (by Nous Research) becomes a full-stack Meta media buyer: it researches competitor ads, generates image and video creatives with Arcads, writes ad copy that actually sounds human, launches everything to Meta (always paused, never spending without you), then monitors performance and reports back on a schedule.
+Install this skill pack and your [Hermes agent](https://hermes-agent.nousresearch.com) (by Nous Research) becomes a full-stack Meta media buyer: it researches competitor ads, generates image and video creatives with Arcads, writes ad copy that actually sounds human, launches everything to Meta (always paused, never spending without you), then monitors performance and reports back on a schedule. And it does none of it blind: Hermes studies your last 90 days first and remembers what works before it builds anything.
 
 You talk to it in plain English, from Telegram, WhatsApp, Discord, or the web chat. It does the media buying.
 
@@ -33,15 +33,16 @@ Open a chat with your Hermes agent and paste this:
 Set up this repo: https://github.com/krusemediallc/hermes-ad-agent. Read SETUP.md and follow it.
 ```
 
-That's it. The agent installs the skills, walks you through connecting Arcads (MCP) and Meta (MCP or CLI, your choice), then runs a short brand interview so every skill knows who it's writing for. When it finishes, say something like "research my competitors and pitch me three ad concepts" and watch it go.
+That's it. The agent installs the skills, walks you through connecting Arcads (MCP) and Meta (MCP or CLI, your choice), audits your ad account's last 90 days into a per-account memory file, then runs a short brand interview so every skill knows who it's writing for. When it finishes, say something like "research my competitors and pitch me three ad concepts" and watch it go.
 
 ## The skills
 
-Fourteen skills, one pipeline: research → create → launch → monitor.
+Fifteen skills, one pipeline: research → create → launch → monitor.
 
 | Skill | What it does |
 |---|---|
 | `ad-agent-orchestrator` | The front door. Takes a plain-English request ("make me new ads for the spring sale") and routes it through the right skills, end to end. |
+| `account-audit` | A read-only 90-day deep dive of each connected ad account, over either Meta backend (MCP or CLI), written to a per-account memory file the creative, copy, and launch skills consult before building anything new. |
 | `brand-setup` | Interviews you about your brand and product, then writes BRAND.md, the context file every other skill reads. |
 | `competitor-ad-research` | Searches the Meta Ad Library for competitor ads and distills them into hooks, angles, and a creative brief. Needs the Meta MCP; the Ad Library is not in the CLI. |
 | `human-ad-copy` | Writes primary text, headlines, and hooks, then strips every known AI-writing tell so the copy reads like a person wrote it. |
