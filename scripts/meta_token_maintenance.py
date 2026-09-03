@@ -1,50 +1,40 @@
 #!/usr/bin/env python3
 """Deterministic maintenance for the Meta USER token behind the hosted Ads MCP.
 
-scripts/meta_mcp_bridge.py reads META_MCP_TOKEN from the env file on every
-request. This script keeps that value fresh without an LLM in the loop: it
-inspects the current token, asks Meta for a long-lived exchange, classifies
-the answer honestly, and only then rewrites the one env line, under a lock,
-with compare-and-swap, an MCP smoke test, and rollback. Python 3.9+, standard
-library only. It never prints or logs a token or the app secret.
+scripts/meta_mcp_bridge.py reads META_MCP_TOKEN from the env file on every request.
+This script keeps that value fresh without an LLM in the loop: inspect the current
+token, ask Meta for a long-lived exchange, classify the answer honestly, and only then
+rewrite the one env line under a lock, with compare-and-swap, an MCP smoke test, and
+rollback. Python 3.9+, standard library only. Never prints a token or the app secret.
 
 Outcome vocabulary (the last stdout line is always "Outcome: <NAME>"):
+  RENEWED               Meta returned a different token expiring more than one day
+                        later than the current one; written and smoke-tested.
+  NO_CHANGE             Meta returned the same token, or the exchange was skipped
+                        because the app credentials are not set. Nothing written.
+  REPLACED_SAME_EXPIRY  A different token string with the same (or earlier) expiry.
+                        Left unwritten unless --replace-same-expiry is passed.
+  REAUTH_REQUIRED       Current token missing, invalid, or expired, or Meta answered
+                        the exchange with an OAuth error (code 190). A human must
+                        mint a new user token (docs/meta-authentication.md).
+  FAILED                Anything else: lock held, network or JSON error, candidate
+                        not a USER token or missing a scope, env file changed
+                        underneath (compare-and-swap), or smoke test failed after
+                        the write (the previous token was restored).
 
-  RENEWED               Meta returned a different token whose expiry is more
-                        than one day later than the current one. It was written
-                        to the env file and passed the smoke test.
-  NO_CHANGE             Meta returned the same token string, or the exchange
-                        was skipped because the app credentials are not set.
-                        Nothing was written; the expiry did not move.
-  REPLACED_SAME_EXPIRY  Meta returned a different token string with the same
-                        or an earlier expiry. Left unwritten unless
-                        --replace-same-expiry is passed.
-  REAUTH_REQUIRED       The current token is missing, invalid, or expired, or
-                        Meta answered the exchange with an OAuth error (code
-                        190). A human must mint a new user token; see
-                        docs/meta-authentication.md.
-  FAILED                Everything else: the lock is held, a network or JSON
-                        error, the candidate is not a USER token or misses a
-                        scope, the env file changed underneath (compare-and-
-                        swap), or the smoke test failed after the write (the
-                        previous token was restored).
+Why an equal-expiry replacement is not a renewal: the fb_exchange_token call on a
+long-lived token often hands back a fresh token string that expires at the same
+instant as the old one. The deadline has not moved, so calling that a renewal hides
+the manual re-auth that is still coming, and rotating the secret for no gain touches
+the live gateway (the bridge picks the new value up on its next call). The old cron
+job labelled these runs renewals; this script reports REPLACED_SAME_EXPIRY, counts
+them in consecutive_non_advancing_runs, and leaves the env file alone by default.
 
-Why an equal-expiry replacement is not a renewal: Meta's fb_exchange_token
-call on a long-lived token often hands back a fresh token string that expires
-at the same instant as the old one. The deadline the operator cares about has
-not moved, so calling that a renewal hides the manual re-auth that is still
-coming. Rotating the secret for no gain also touches the live gateway (the
-bridge picks the new value up on its next call). The old cron job labelled
-these runs as renewals; this script reports REPLACED_SAME_EXPIRY, counts them
-in consecutive_non_advancing_runs in the state file, and leaves the env file
-alone unless told otherwise.
-
-Exit codes: 0 RENEWED or NO_CHANGE (or a written REPLACED_SAME_EXPIRY) with at
-least --min-days of validity left; 1 REPLACED_SAME_EXPIRY left unwritten, or a
-healthy outcome with fewer than --min-days left; 2 REAUTH_REQUIRED or FAILED.
-With --json, stdout is one JSON line followed by the "Outcome:" line.
---dry-run runs the inspections and the exchange, reports what a live run would
-do, and writes nothing at all (no env, state, or lock file).
+Exit codes: 0 RENEWED or NO_CHANGE (or a written REPLACED_SAME_EXPIRY) with at least
+--min-days left; 1 REPLACED_SAME_EXPIRY left unwritten, or a healthy outcome with
+fewer than --min-days left; 2 REAUTH_REQUIRED or FAILED. With --json, stdout is one
+JSON line followed by the Outcome line. --dry-run inspects and exchanges, reports
+what a live run would do, and writes nothing at all (no env, state, or lock file).
 """
 import argparse
 import datetime as dt
@@ -60,7 +50,6 @@ import urllib.request
 
 GRAPH_HOST = "https://graph.facebook.com"
 DEFAULT_UPSTREAM = "https://mcp.facebook.com/ads"
-DEFAULT_GRAPH_VERSION = "v25.0"
 PROTOCOL_VERSION = "2025-06-18"
 CLIENT_NAME = "hermes-ad-agent-token-maintenance"
 NET_TIMEOUT = 30.0
@@ -69,7 +58,7 @@ REQUIRED_SCOPES = ["ads_mcp_management", "ads_read", "ads_management", "catalog_
                    "business_management", "pages_show_list", "instagram_basic"]
 HEALTHY = ("RENEWED", "NO_CHANGE", "REPLACED_SAME_EXPIRY")
 TOKEN_RE = re.compile(r"EAA[A-Za-z0-9]{10,}")
-_SECRETS = set()  # values that must never reach stdout, stderr, or the state file
+_SECRETS = set()  # values that must never reach stdout or the state file
 
 
 class Stop(Exception):
@@ -83,46 +72,42 @@ class Stop(Exception):
 def redact(text):
     text = str(text)
     for secret in sorted(_SECRETS, key=len, reverse=True):
-        if secret and len(secret) >= 8:
+        if len(secret) >= 8:
             text = text.replace(secret, "[redacted]")
     return TOKEN_RE.sub("EAA[redacted]", text)
 
 
 def iso(ts):
-    if ts is None:
-        return None
     if not ts:
-        return "never"
+        return None if ts is None else "never"
     return dt.datetime.fromtimestamp(int(ts), dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-# ---------------------------------------------------------------- dotenv
+# ---------------------------------------------------------------- env file
 
 def parse_dotenv(text):
-    """KEY=value, export KEY=value, single or double quotes, comments. Values stay in memory."""
+    """KEY=value, export KEY=value, single or double quotes, full-line and trailing comments."""
     out = {}
     for raw in text.splitlines():
         line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
         if line.startswith("export "):
             line = line[7:].strip()
-        key, value = line.split("=", 1)
-        key, value = key.strip(), value.strip()
-        if not key:
+        if not line or line.startswith("#") or "=" not in line:
             continue
+        key, value = (part.strip() for part in line.split("=", 1))
         if value[:1] in ("'", '"'):
             close = value.find(value[0], 1)
             value = value[1:close] if close != -1 else value[1:]
         elif " #" in value:
             value = value[:value.index(" #")].rstrip()
-        out[key] = value
+        if key:
+            out[key] = value
     return out
 
 
 def rewrite_token_lines(text, var, new_value):
-    """Replace the value on every VAR= line; keep prefix, spacing, quotes, trailing comments
-    and line endings byte for byte. Returns (new_text, lines_changed)."""
+    """Replace the value on every VAR= line, keeping prefix, spacing, quotes, trailing comments and
+    line endings byte for byte. Returns (new_text, lines_changed)."""
     pattern = re.compile(r"^(\s*(?:export\s+)?)" + re.escape(var) + r"(\s*=\s*)(.*)$")
     out, hits = [], 0
     for line in text.splitlines(keepends=True):
@@ -133,13 +118,9 @@ def rewrite_token_lines(text, var, new_value):
             continue
         prefix, eq, old = match.groups()
         old = old.strip()
-        if old[:1] in ("'", '"') and old.find(old[0], 1) != -1:
-            close = old.find(old[0], 1)
-            new = old[0] + new_value + old[0] + old[close + 1:]
-        else:
-            idx = old.find(" #")
-            new = new_value + (old[idx:] if idx != -1 else "")
-        out.append(prefix + var + eq + new + line[len(body):])
+        quote = old[0] if old[:1] in ("'", '"') and old.find(old[0], 1) > 0 else ""
+        tail = old[old.find(quote, 1) + 1:] if quote else (old[old.find(" #"):] if " #" in old else "")
+        out.append(prefix + var + eq + quote + new_value + quote + tail + line[len(body):])
         hits += 1
     return "".join(out), hits
 
@@ -150,9 +131,8 @@ def read_text(path):
 
 
 def atomic_write(path, text):
-    """Temp file in the same directory, fsync, mode 0600, os.replace, directory fsync."""
-    directory = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(prefix=".maint-", dir=directory)
+    """Temp file in the same directory, fsync, mode 0600, os.replace. The temp file never outlives a failure."""
+    fd, tmp = tempfile.mkstemp(prefix=".maint-", dir=os.path.dirname(os.path.abspath(path)))
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
@@ -161,42 +141,21 @@ def atomic_write(path, text):
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
     except BaseException:
-        try:
+        if os.path.exists(tmp):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
-    try:
-        dfd = os.open(directory, os.O_RDONLY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
-    except OSError:
-        pass
 
-
-# ---------------------------------------------------------------- paths, lock, state
 
 def resolve_env_file(explicit):
-    """--env-file, else $META_MCP_ENV_FILE, else $HERMES_HOME/.env, else /data/.env if it
-    exists, else ~/.hermes/.env. The first three are authoritative when set: a missing file
-    there is reported, never silently replaced by the next candidate (this script writes)."""
-    for candidate in (explicit, os.environ.get("META_MCP_ENV_FILE")):
-        if candidate:
-            return candidate
-    if os.environ.get("HERMES_HOME"):
-        return os.path.join(os.environ["HERMES_HOME"], ".env")
-    if os.path.isfile("/data/.env"):
-        return "/data/.env"
-    return os.path.expanduser("~/.hermes/.env")
-
-
-def resolve_state_file(explicit):
+    """--env-file, else $META_MCP_ENV_FILE, else $HERMES_HOME/.env, else /data/.env if it exists, else
+    ~/.hermes/.env. The first three are authoritative when set: this script writes, so a missing file
+    there is reported rather than silently replaced by the next candidate."""
+    explicit = explicit or os.environ.get("META_MCP_ENV_FILE")
     if explicit:
         return explicit
-    base = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
-    return os.path.join(base, "hermes-ad-agent", "token-maintenance-state.json")
+    if os.environ.get("HERMES_HOME"):
+        return os.path.join(os.environ["HERMES_HOME"], ".env")
+    return "/data/.env" if os.path.isfile("/data/.env") else os.path.expanduser("~/.hermes/.env")
 
 
 def acquire_lock(path):
@@ -205,22 +164,13 @@ def acquire_lock(path):
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
     except OSError:
         os.close(fd)
         return None
-    return fd
 
 
-def load_state(path):
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-# ---------------------------------------------------------------- network layer (injectable)
+# ---------------------------------------------------------------- network layer (injectable for tests)
 
 def _json_or_none(raw):
     try:
@@ -240,11 +190,9 @@ def graph_get(url, timeout):
 
 
 def mcp_post(url, headers, body, timeout):
-    """POST one JSON-RPC message; return (status, lowercase headers, body text). For an SSE
-    body, stop reading as soon as the response to the request id has arrived."""
-    req = urllib.request.Request(url, data=body, method="POST")
-    for key, value in headers.items():
-        req.add_header(key, value)
+    """POST one JSON-RPC message; return (status, lowercase headers, body text). An SSE body is read
+    only until the response to the request id has arrived (Meta may keep the stream open)."""
+    req = urllib.request.Request(url, data=body, method="POST", headers=headers)
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)
     except urllib.error.HTTPError as exc:
@@ -253,16 +201,11 @@ def mcp_post(url, headers, body, timeout):
         hdrs = {k.lower(): v for k, v in resp.headers.items()}
         if "text/event-stream" not in hdrs.get("content-type", ""):
             return resp.status, hdrs, resp.read().decode("utf-8", "replace")
-        sent = _json_or_none(body)
+        sent, text = _json_or_none(body), ""
         want = sent.get("id") if isinstance(sent, dict) else None
-        text = ""
-        while True:
-            chunk = resp.read(4096)
-            if not chunk:
-                break
+        for chunk in iter(lambda: resp.read(4096), b""):
             text += chunk.decode("utf-8", "replace")
-            if want is not None and any(m.get("id") == want and ("result" in m or "error" in m)
-                                        for m in parse_sse(text)):
+            if want is not None and any(m.get("id") == want and ("result" in m or "error" in m) for m in parse_sse(text)):
                 break
         return resp.status, hdrs, text
 
@@ -271,20 +214,13 @@ def parse_sse(text):
     out = []
     for event in re.split(r"\r?\n\r?\n", text):
         data = "\n".join(l[5:].lstrip() for l in event.splitlines() if l.startswith("data:")).strip()
-        if not data:
-            continue
-        try:
-            parsed = json.loads(data)
-        except ValueError:
-            continue
+        parsed = _json_or_none(data.encode("utf-8")) if data else None
         out.extend(parsed if isinstance(parsed, list) else [parsed])
     return [m for m in out if isinstance(m, dict)]
 
 
 def parse_body(headers, text):
-    if "text/event-stream" in headers.get("content-type", ""):
-        return parse_sse(text)
-    parsed = _json_or_none(text.encode("utf-8"))
+    parsed = None if "text/event-stream" in headers.get("content-type", "") else _json_or_none(text.encode("utf-8"))
     if parsed is None:
         return parse_sse(text)
     return [m for m in (parsed if isinstance(parsed, list) else [parsed]) if isinstance(m, dict)]
@@ -294,50 +230,38 @@ def parse_body(headers, text):
 
 class Maintainer:
     def __init__(self, args, graph_get_fn=None, mcp_post_fn=None, now=None):
-        self.a = args
-        self.graph_get = graph_get_fn or graph_get
-        self.mcp_post = mcp_post_fn or mcp_post
+        self.a, self.graph_get, self.mcp_post = args, graph_get_fn or graph_get, mcp_post_fn or mcp_post
         self.now = now or (lambda: dt.datetime.now(dt.timezone.utc).timestamp())
-        self.report = {"outcome": None, "message": None, "token_type": None, "scopes_ok": None,
-                       "missing_scopes": None, "expires_at": None, "data_access_expires_at": None,
-                       "days_remaining": None, "written": False, "rolled_back": False,
-                       "smoke_test": "skipped", "next_renewal_deadline": None, "next_steps": None,
-                       "notes": [], "candidate_expires_at": None, "would_write": None,
-                       "dry_run": bool(args.dry_run), "env_file": None, "state_file": None}
+        self.report = dict.fromkeys(("outcome", "message", "token_type", "scopes_ok", "missing_scopes", "expires_at",
+                                     "data_access_expires_at", "days_remaining", "next_renewal_deadline", "next_steps",
+                                     "candidate_expires_at", "would_write", "env_file", "state_file"))
+        self.report.update(written=False, rolled_back=False, smoke_test="skipped", notes=[],
+                           dry_run=bool(args.dry_run), min_days=args.min_days)
 
     def note(self, text):
         self.report["notes"].append(redact(text)[:200])
 
     # -- Graph API ----------------------------------------------------------------
-    def graph_url(self, path, params):
-        return "%s/%s/%s?%s" % (GRAPH_HOST, self.a.graph_version, path, urllib.parse.urlencode(params))
-
-    def call_graph(self, url):
+    def graph(self, path, params, oauth_outcome):
+        """GET <version>/<path>; return (status, json). A Graph error raises Stop: OAuth errors (code 190 or
+        'Error validating access token') get `oauth_outcome`, everything else FAILED."""
+        url = "%s/%s/%s?%s" % (GRAPH_HOST, self.a.graph_version, path, urllib.parse.urlencode(params))
         try:
-            return self.graph_get(url, NET_TIMEOUT)
+            status, data = self.graph_get(url, NET_TIMEOUT)
         except Exception as exc:  # network, timeout, decode; text is redacted
             raise Stop("FAILED", "graph request failed: %s" % redact("%s: %s" % (type(exc).__name__, exc)))
-
-    @staticmethod
-    def graph_error(data):
-        return data.get("error") if isinstance(data, dict) and isinstance(data.get("error"), dict) else None
-
-    @staticmethod
-    def is_oauth(err):
-        return err.get("code") == 190 or "Error validating access token" in str(err.get("message", ""))
-
-    @staticmethod
-    def err_text(err, status):
-        return "%s (code %s, HTTP %s)" % (redact(err.get("message", "unknown error")), err.get("code"), status)
+        err = data.get("error") if isinstance(data, dict) else None
+        if isinstance(err, dict):
+            oauth = err.get("code") == 190 or "Error validating access token" in str(err.get("message", ""))
+            raise Stop(oauth_outcome if oauth else "FAILED", "%s: %s (code %s, HTTP %s)" % (
+                path, redact(err.get("message", "unknown error")), err.get("code"), status))
+        return status, data
 
     def inspect(self, token, app_id, app_secret, who):
         """debug_token; returns {type, expires_at, data_access_expires_at, scopes} or raises Stop."""
-        access = "%s|%s" % (app_id, app_secret) if app_id and app_secret else token
-        status, data = self.call_graph(self.graph_url("debug_token", {"input_token": token, "access_token": access}))
         bad = "REAUTH_REQUIRED" if who == "current" else "FAILED"
-        err = self.graph_error(data)
-        if err:
-            raise Stop(bad if self.is_oauth(err) else "FAILED", "debug_token(%s): %s" % (who, self.err_text(err, status)))
+        access = "%s|%s" % (app_id, app_secret) if app_id and app_secret else token
+        status, data = self.graph("debug_token", {"input_token": token, "access_token": access}, bad)
         d = data.get("data") if isinstance(data, dict) else None
         if not isinstance(d, dict):
             raise Stop("FAILED", "debug_token(%s): unexpected response (HTTP %s)" % (who, status))
@@ -353,46 +277,29 @@ class Maintainer:
     def describe(self, info):
         """Record the token the env file holds right now."""
         r, exp = self.report, info["expires_at"]
-        r["token_type"] = info["type"]
-        r["missing_scopes"] = [s for s in REQUIRED_SCOPES if s not in info["scopes"]]
+        r["token_type"], r["missing_scopes"] = info["type"], [s for s in REQUIRED_SCOPES if s not in info["scopes"]]
         r["scopes_ok"] = not r["missing_scopes"]
         r["expires_at"], r["data_access_expires_at"] = iso(exp), iso(info["data_access_expires_at"])
         r["days_remaining"] = round((exp - self.now()) / 86400.0, 1) if exp else None
         r["next_renewal_deadline"] = iso(exp - self.a.min_days * 86400) if exp else None
-
-    def exchange(self, current, app_id, app_secret):
-        url = self.graph_url("oauth/access_token", {"grant_type": "fb_exchange_token", "client_id": app_id,
-                                                     "client_secret": app_secret, "fb_exchange_token": current})
-        status, data = self.call_graph(url)
-        err = self.graph_error(data)
-        if err:
-            raise Stop("REAUTH_REQUIRED" if self.is_oauth(err) else "FAILED", "exchange: " + self.err_text(err, status))
-        token = data.get("access_token") if isinstance(data, dict) else None
-        if status != 200 or not token:
-            raise Stop("FAILED", "exchange: no access_token in the response (HTTP %s)" % status)
-        if data.get("expires_in") is not None:
-            self.note("exchange reported expires_in=%s s" % data.get("expires_in"))
-        return str(token).strip()
 
     # -- env file -----------------------------------------------------------------
     def write_token(self, env_file, expect, new):
         """Compare-and-swap: re-read, require the stored token to equal `expect`, rewrite that line only."""
         try:
             text = read_text(env_file)
-        except OSError as exc:
-            raise Stop("FAILED", "cannot read env file: %s" % type(exc).__name__)
-        if parse_dotenv(text).get(self.a.token_var, "").strip() != expect:
-            raise Stop("FAILED", "token changed underneath, not writing")
-        new_text, hits = rewrite_token_lines(text, self.a.token_var, new)
-        if not hits:
-            raise Stop("FAILED", "no %s line found to rewrite" % self.a.token_var)
-        try:
+            if parse_dotenv(text).get(self.a.token_var, "").strip() != expect:
+                raise Stop("FAILED", "token changed underneath, not writing")
+            new_text, hits = rewrite_token_lines(text, self.a.token_var, new)
+            if not hits:
+                raise Stop("FAILED", "no %s line found to rewrite" % self.a.token_var)
             atomic_write(env_file, new_text)
         except OSError as exc:
-            raise Stop("FAILED", "env file write failed: %s" % type(exc).__name__)
+            raise Stop("FAILED", "env file read/write failed: %s" % type(exc).__name__)
 
     # -- MCP smoke test -----------------------------------------------------------
     def smoke_test(self, token):
+        """initialize, notifications/initialized, tools/list against --upstream with the candidate token."""
         headers = {"Authorization": "Bearer " + token, "Accept": "application/json, text/event-stream",
                    "Accept-Encoding": "identity", "Content-Type": "application/json",
                    "MCP-Protocol-Version": PROTOCOL_VERSION, "User-Agent": CLIENT_NAME + "/1.0"}
@@ -407,7 +314,7 @@ class Maintainer:
                 "clientInfo": {"name": CLIENT_NAME, "version": "1.0"}}})
             err = next((m["error"] for m in msgs if m.get("id") == 1 and isinstance(m.get("error"), dict)), None)
             if status not in (200, 202) or err:
-                return False, "initialize failed: HTTP %s%s" % (status, "" if not err else ", " + redact(err.get("message", "")))
+                return False, "initialize failed: HTTP %s%s" % (status, ", " + redact(err.get("message", "")) if err else "")
             if hdrs.get("mcp-session-id"):
                 headers["Mcp-Session-Id"] = hdrs["mcp-session-id"]
             post({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -433,10 +340,9 @@ class Maintainer:
         current = values.get(a.token_var, "").strip()
         if not current:
             raise Stop("REAUTH_REQUIRED", "no token in env file (%s in %s)" % (a.token_var, env_file))
-        _SECRETS.add(current)
         app_id = (values.get(a.app_id_var) or os.environ.get(a.app_id_var) or "").strip()
         app_secret = (values.get(a.app_secret_var) or os.environ.get(a.app_secret_var) or "").strip()
-        _SECRETS.update(s for s in (app_id, app_secret) if s)
+        _SECRETS.update(s for s in (current, app_id, app_secret) if s)
         have_app = bool(app_id and app_secret)
         if not have_app:
             self.note("app credentials not set: debug_token used the token as its own access_token")
@@ -445,7 +351,14 @@ class Maintainer:
         if not have_app:
             self.note("exchange skipped: %s/%s not set" % (a.app_id_var, a.app_secret_var))
             raise Stop("NO_CHANGE", "exchange skipped: %s/%s not set" % (a.app_id_var, a.app_secret_var))
-        candidate = self.exchange(current, app_id, app_secret)
+        status, data = self.graph("oauth/access_token", {
+            "grant_type": "fb_exchange_token", "client_id": app_id, "client_secret": app_secret,
+            "fb_exchange_token": current}, "REAUTH_REQUIRED")
+        candidate = str(data.get("access_token") or "").strip() if isinstance(data, dict) else ""
+        if status != 200 or not candidate:
+            raise Stop("FAILED", "exchange: no access_token in the response (HTTP %s)" % status)
+        if data.get("expires_in") is not None:
+            self.note("exchange reported expires_in=%s s" % data.get("expires_in"))
         if candidate == current:
             raise Stop("NO_CHANGE", "Meta returned the same token; expiry unchanged")
         _SECRETS.add(candidate)
@@ -471,51 +384,52 @@ class Maintainer:
         if a.no_smoke_test:
             r["smoke_test"] = "skipped (--no-smoke-test)"
         else:
-            ok, detail = self.smoke_test(candidate)
-            r["smoke_test"] = detail
+            ok, r["smoke_test"] = self.smoke_test(candidate)
             if not ok:
-                self.rollback(env_file, candidate, current, info_t, detail)
+                self.rollback(env_file, candidate, current, info_t)
             self.note("the bridge re-reads the env file per request; the live gateway uses the new token on its next call")
         raise Stop(outcome, "new token written to %s%s" % (env_file, "" if advancing else " (same expiry, forced)"))
 
-    def rollback(self, env_file, candidate, current, info_t, detail):
+    def rollback(self, env_file, candidate, current, info_t):
+        detail = self.report["smoke_test"]
         try:
             self.write_token(env_file, candidate, current)
         except Stop as exc:
-            raise Stop("FAILED", "smoke test failed (%s) and rollback failed: %s; the env file may hold the "
-                                 "untested token" % (detail, exc.message))
+            raise Stop("FAILED", "smoke test failed (%s) and rollback failed: %s; the env file may hold the untested "
+                                 "token" % (detail, exc.message))
         self.report["written"], self.report["rolled_back"] = False, True
         self.describe(info_t)
         raise Stop("FAILED", "smoke test failed (%s); rolled back to the previous token" % detail)
 
     # -- wrap-up ------------------------------------------------------------------
-    def exit_code(self):
-        r, outcome = self.report, self.report["outcome"]
-        if outcome not in HEALTHY:
-            return 2
-        if outcome == "REPLACED_SAME_EXPIRY" and not r["written"]:
-            return 1
-        return 1 if r["days_remaining"] is not None and r["days_remaining"] < self.a.min_days else 0
-
-    def next_steps(self):
+    def finish(self):
+        """Derive exit_code and next_steps from the final report."""
         r, a, outcome = self.report, self.a, self.report["outcome"]
+        low = r["days_remaining"] is not None and r["days_remaining"] < a.min_days
+        unwritten_same = outcome == "REPLACED_SAME_EXPIRY" and not r["written"]
+        r["exit_code"] = 2 if outcome not in HEALTHY else (1 if unwritten_same or low else 0)
         if outcome == "REAUTH_REQUIRED":
-            return ("a human must mint a new USER token with all seven scopes, exchange it for a long-lived one, "
-                    "and store it as %s in %s (docs/meta-authentication.md); then re-run" % (a.token_var, r["env_file"]))
-        if outcome == "FAILED":
-            return "fix the reported error and re-run" + (" (the previous token was restored)" if r["rolled_back"] else "")
-        if outcome == "REPLACED_SAME_EXPIRY" and not r["written"]:
-            steps = "no action needed for the same-expiry candidate; re-run with --replace-same-expiry only to rotate the string"
+            r["next_steps"] = ("a human must mint a new USER token with all seven scopes, exchange it for a long-lived "
+                               "one, and store it as %s in %s (docs/meta-authentication.md); then re-run"
+                               % (a.token_var, r["env_file"]))
+        elif outcome == "FAILED":
+            r["next_steps"] = "fix the reported error and re-run" + (" (the previous token was restored)" if r["rolled_back"] else "")
         else:
-            steps = "nothing to do"
-        if r["days_remaining"] is not None and r["days_remaining"] < a.min_days:
-            steps += "; fewer than %g days remain and Meta did not advance the expiry: plan a manual re-auth before %s" % (
-                a.min_days, r["expires_at"])
-        return steps
+            r["next_steps"] = ("no action needed for the same-expiry candidate; re-run with --replace-same-expiry only "
+                               "to rotate the string" if unwritten_same else "nothing to do")
+            if low:
+                r["next_steps"] += ("; fewer than %g days remain and Meta did not advance the expiry: plan a manual "
+                                    "re-auth before %s" % (a.min_days, r["expires_at"]))
+        return r["exit_code"]
 
     def save_state(self, path):
+        """Bounded JSON state (overwritten, never appended); notes are short redacted strings."""
         r, outcome, now_iso = self.report, self.report["outcome"], iso(self.now())
-        prev = load_state(path)
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                prev = json.load(fh)
+        except (OSError, ValueError):
+            prev = {}
         runs, last_adv = int(prev.get("consecutive_non_advancing_runs") or 0), prev.get("last_advancing_expiry_at")
         if outcome == "RENEWED":
             runs, last_adv = 0, now_iso
@@ -534,7 +448,9 @@ class Maintainer:
 
     def run(self):
         a, r = self.a, self.report
-        r["env_file"], r["state_file"] = resolve_env_file(a.env_file), resolve_state_file(a.state_file)
+        base = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+        r["env_file"] = resolve_env_file(a.env_file)
+        r["state_file"] = a.state_file or os.path.join(base, "hermes-ad-agent", "token-maintenance-state.json")
         lock_fd, write_state = None, not a.dry_run
         try:
             if not a.upstream.startswith("https://"):
@@ -550,12 +466,12 @@ class Maintainer:
             r["outcome"], r["message"] = stop.outcome, redact(stop.message)
         except Exception as exc:  # never exit without an Outcome line
             r["outcome"], r["message"] = "FAILED", redact("unexpected %s: %s" % (type(exc).__name__, exc))
-        r["exit_code"], r["next_steps"] = self.exit_code(), self.next_steps()
+        code = self.finish()
         if write_state:
             self.save_state(r["state_file"])
         if lock_fd is not None:
             os.close(lock_fd)
-        return r["exit_code"]
+        return code
 
 
 # ---------------------------------------------------------------- output and CLI
@@ -578,7 +494,7 @@ def print_report(r, as_json):
     print("Outcome: %s" % r["outcome"])
 
 
-def build_arg_parser():
+def main(argv=None, graph_get_fn=None, mcp_post_fn=None, now=None):
     p = argparse.ArgumentParser(description="Keep the Meta user token for the hosted Ads MCP fresh (deterministic).")
     p.add_argument("--env-file", help="dotenv file holding the token (default: auto-detect, see resolve_env_file)")
     p.add_argument("--token-var", default="META_MCP_TOKEN")
@@ -591,16 +507,10 @@ def build_arg_parser():
     p.add_argument("--state-file", help="default $HERMES_HOME/hermes-ad-agent/token-maintenance-state.json")
     p.add_argument("--no-smoke-test", action="store_true")
     p.add_argument("--upstream", default=DEFAULT_UPSTREAM)
-    p.add_argument("--graph-version", default=DEFAULT_GRAPH_VERSION)
-    return p
-
-
-def main(argv=None, graph_get_fn=None, mcp_post_fn=None, now=None):
-    args = build_arg_parser().parse_args(argv)
-    maintainer = Maintainer(args, graph_get_fn, mcp_post_fn, now)
+    p.add_argument("--graph-version", default="v25.0")
+    maintainer = Maintainer(p.parse_args(argv), graph_get_fn, mcp_post_fn, now)
     code = maintainer.run()
-    maintainer.report["min_days"] = args.min_days
-    print_report(maintainer.report, args.json)
+    print_report(maintainer.report, maintainer.a.json)
     return code
 
 
