@@ -27,7 +27,7 @@ Say to Hermes (paste the repo link you got with this guide):
 
 > Set up the Hermes Ad Agent skill pack from this repo: https://github.com/krusemediallc/hermes-ad-agent. Read its SETUP.md and follow it step by step. Check in with me at each checkpoint.
 
-Hermes will clone the repo, install every skill, and then move on to connecting Meta (one of two routes) and Arcads (next two chapters are part of the same guided setup).
+Hermes will clone the repo, install every skill, and then move on to connecting Meta (one of two routes) and Arcads (next two chapters are part of the same guided setup). Right after the install, Hermes points its working directory at the pack, so the Project Context panel in the dashboard stops saying "No project context file found" and shows the pack's AGENTS.md instead. After the brand interview in Chapter 4, it also saves a short profile of you and your setup to its own memory, so every new conversation starts already oriented.
 
 **Want to try it before using your real brand?** The repo ships with a demo mode: a sample BRAND.md and a set of parody demo products. Say:
 

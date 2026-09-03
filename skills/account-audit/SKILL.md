@@ -383,14 +383,49 @@ C, that the Route B token would upgrade it), and the file path where the
 full memory now lives. Do not paste the whole file or the snapshot files
 into chat.
 
-### 10. Offer a refresh
+### 10. Note it in Hermes memory
+
+Hermes keeps a small personal notes file, `~/.hermes/memories/MEMORY.md`
+("My Notes" in the dashboard, cap 2,200 characters), that is injected into
+every session's system prompt. Leave one pointer there so the next session
+knows the account memory exists without opening the workspace. Use the
+built-in `memory` tool, notes target, one entry under 250 characters that
+starts with the stable prefix `Hermes Ad Agent audit:` and records only:
+how many account memory files exist under `memory/accounts/` at the
+workspace root (a count, never the IDs), the capture tier used (`graph`,
+`cli`, or `mcp`), and the audit date. Example shape:
+`Hermes Ad Agent audit: <N> account memory file(s) at
+<root>/memory/accounts/, captured via <graph|cli|mcp> on <date>. Read the
+matching act_ file before building ads.`
+
+Rules for this entry:
+
+- First audit: `add`. Any refresh, or an audit of another account: check
+  for an existing `Hermes Ad Agent audit:` entry and `replace` it (matching
+  on that prefix as the old text), updating the count, tier, and date. One
+  entry per Hermes instance, never one per account.
+- Nothing from the account goes in: no account IDs, account names, pixel
+  or audience names, copy, spend, or any other number from the audit.
+  Those live only in the gitignored memory file. The Hermes memory file is
+  a pointer.
+- Stay far under the file cap (2,200 characters shared with everything
+  else the agent has remembered); if a write is rejected for size, shorten
+  this entry rather than trimming someone else's.
+- The file is loaded as a frozen snapshot at session start, so the entry
+  is visible from the next session on. If `memory.write_approval` is true
+  in `~/.hermes/config.yaml`, the write waits in `/memory` as pending until
+  the user runs `/memory approve`; tell them. If `memory.memory_enabled` is
+  false, skip the write and say so in one line.
+
+### 11. Offer a refresh
 
 One line: the `ad-reporting-automations` skill can schedule a read-only
 refresh of this audit on a cadence (monthly is a sensible default) if the
 user wants it; otherwise skip. Manual refresh: the user says "refresh the
 account memory" any time, which reruns this workflow and updates the same
 file, replacing stale sections and appending a dated "## Changelog" entry
-rather than creating a second file.
+rather than creating a second file, and replaces the Hermes memory entry
+from step 10 with the new tier and date.
 
 ## How the pack consumes the memory file
 
@@ -424,6 +459,9 @@ rather than creating a second file.
 - Do not put account IDs, audience names, or copy into README, SETUP, a
   skill file, or any other committed file; the memory file under the
   gitignored `memory/` directory is their only home.
+- Do not put account IDs, names, or numbers into the Hermes memory entry
+  (step 10) either; it is a pointer with a file count, a tier, and a date,
+  and it is replaced on refresh, never duplicated.
 - Do not audit the demo brand or a disconnected setup; skip with a note.
 - Do not carry numbers from memory of past sessions or from an old memory
   file into a refresh; pull fresh data every time and update the file.

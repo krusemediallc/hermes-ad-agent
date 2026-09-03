@@ -74,7 +74,31 @@ ls skills/
 
 If the user handed you the files some other way (an upload, a shared folder), just confirm you can see a `skills/` directory containing one folder per skill, each with a `SKILL.md` inside.
 
-**Checkpoint 1:** `ls skills/` shows the skill folders, each folder contains a `SKILL.md`, and you have recorded the absolute path of the workspace root (run `pwd` from inside it). Later steps and every skill in this pack refer back to that path.
+### Make the workspace root Hermes's working directory
+
+Hermes loads one project-context file from its working directory at the start of every session, taking the first match in this order: `.hermes.md` / `HERMES.md`, then `AGENTS.override.md`, then `AGENTS.md`, then `CLAUDE.md`, then `.cursorrules` / `.cursor/rules/*.mdc`. This repo's `AGENTS.md` is that file. It is how a fresh session learns where the workspace root is, which safety rails apply, and how the skills fit together, before the user types a word. If Hermes's working directory is somewhere else, none of that loads, and every session starts cold. Two routes, in order of preference:
+
+**Route 1 (preferred): set the gateway working directory to the workspace root.** The `terminal.cwd` key in `~/.hermes/config.yaml` controls the working directory for the gateway (dashboard and messaging sessions) and for cron jobs. Use the absolute path you recorded above:
+
+```yaml
+terminal:
+  cwd: "/absolute/path/to/hermes-ad-agent"
+```
+
+The typical command shape is `hermes config set terminal.cwd /absolute/path/to/hermes-ad-agent`; verify the exact syntax with `hermes config --help` before relying on it, or edit `config.yaml` directly, which always works. The `TERMINAL_CWD` environment variable overrides the key for a single invocation. Whether the gateway picks up the change without a restart is unverified, so after setting it, open the dashboard and check Memory > Project Context; if it still reports no file, restart the gateway and check again. CLI (TUI) sessions ignore this key and always use the directory they were launched from, so tell the user to `cd` into the workspace root before starting one.
+
+**Route 2 (fallback): put a pointer file where Hermes already works.** If the working directory cannot be changed, write a small `AGENTS.md` into Hermes's current working directory (find it with `pwd` from a Hermes terminal session, or read `terminal.cwd` from `config.yaml`). Its content, with the real absolute path substituted:
+
+```
+# Hermes Ad Agent
+
+The Hermes Ad Agent workspace is at /absolute/path/to/hermes-ad-agent.
+Read /absolute/path/to/hermes-ad-agent/AGENTS.md now and treat that directory as the workspace root for every skill in that pack.
+```
+
+If an `AGENTS.md` already exists in that directory, never overwrite it: append those lines under a heading at the end of the existing file. Two limits to know about: outside a git repository Hermes checks only the working directory itself, never its parents, so the pointer has to sit exactly there; and inside a git repository Hermes merges the chain of `AGENTS.md` files from the git root down to the working directory, which is fine, the pointer still loads.
+
+**Checkpoint 1:** `ls skills/` shows the skill folders, each folder contains a `SKILL.md`, and you have recorded the absolute path of the workspace root (run `pwd` from inside it). Later steps and every skill in this pack refer back to that path. Also: the dashboard's Memory > Project Context panel shows this repo's `AGENTS.md` (or the Route 2 pointer), not "No project context file found for this workspace".
 
 ---
 
@@ -298,7 +322,40 @@ cp assets/demo-brand/BRAND.md BRAND.md
 
 The demo BRAND.md points at the parody products in `<workspace root>/assets/demo-products/`, so image and video skills resolve reference images without any extra setup. One hard limit: the demo landing URL is a placeholder on example.com, and `meta-ad-launcher` checks for example.com URLs and refuses to create any ad until a real URL is supplied (Meta rejects example.com). So demo mode exercises research, creative, and copy end to end, but a launch still needs a real destination URL. When the user is ready for their real brand, run `/brand-setup`; it replaces the demo file.
 
-**Checkpoint 6:** `BRAND.md` exists at the workspace root (from the interview, or the demo copy), it includes Performance Targets (at least a target CPA or target ROAS), and the user has confirmed its contents look right. If it came from the interview, its `## Meta Assets` section names the Meta connection (`mcp` or `cli`) that matches Checkpoint 4.
+### Save the essentials to Hermes memory
+
+Hermes keeps two personal memory files and injects both into your system prompt at the start of every session: `~/.hermes/memories/USER.md` (the User Profile: who the user is, how they like to be talked to, what they expect; cap 1,375 characters, about 500 tokens) and `~/.hermes/memories/MEMORY.md` (My Notes: your own notes on the environment and its conventions; cap 2,200 characters, about 800 tokens). `BRAND.md` and the account memory are read only when a skill opens them; these two files are read every time. Use them so a fresh session already knows the shape of this setup.
+
+Once the user has confirmed `BRAND.md`, use your built-in `memory` tool (action `add`) to write exactly one entry to each file:
+
+1. **User profile (`USER.md`), keep it under 400 characters.** The brand name and a one-line offer, the user's role (founder, in-house media buyer, agency), the channel and cadence they want reports on (for example "Telegram, weekday mornings"), and the sentence "always confirm before any spend".
+2. **Notes (`MEMORY.md`), keep it under 500 characters.** The workspace root's absolute path, the Meta backend in use (`mcp` or `cli`), that the Arcads MCP is connected, that `BRAND.md` lives at the workspace root and account memory at `memory/accounts/`, and the sentence "everything launches PAUSED".
+
+Example shapes (substitute the real values):
+
+```
+USER.md:   <Brand> sells <one-line offer>. User is the <role>. Wants performance reports via <channel>, <cadence>. Always confirm before any spend.
+MEMORY.md: Hermes Ad Agent workspace root: <absolute path>. Meta backend: <mcp|cli>. Arcads MCP connected. BRAND.md at the workspace root; account memory at memory/accounts/act_<ID>.md. Everything launches PAUSED.
+```
+
+Three things to know:
+
+- The caps (1,375 and 2,200 characters) apply to the whole file, and any entries already there share that space. Stay within the budgets above, and if you re-run setup later, use the tool's `replace` action (it matches on a substring of the existing entry) instead of adding a second copy.
+- Both files are injected as a frozen snapshot at session start, so the entries show up from the **next** session on. This session will not see them; that is expected.
+- If `memory.write_approval` is `true` in `config.yaml`, the writes wait in a pending queue instead of landing. Tell the user to run `/memory pending` to review them and `/memory approve` to accept (or `/memory reject`).
+
+Never store tokens, ad account IDs, Page IDs, pixel IDs, or ad copy in these files; they belong in `BRAND.md` and `memory/accounts/`. The user can add to memory at any time by telling you "remember that ...".
+
+### Optional: the media buyer soul
+
+`hermes/SOUL.md` in this repo is an optional persona: the voice and judgment of a working media buyer (direct, numbers first, honest about what it does not know). Hermes reads `~/.hermes/SOUL.md` (or `$HERMES_HOME/SOUL.md`) as slot #1 of its system prompt, and that file is global to the whole Hermes instance, not to this workspace, which is why it is strictly opt-in. Ask the user in plain terms, something like: "This pack ships an optional media buyer persona for Hermes. It changes my tone and how I handle uncertainty in every conversation, not just ads work. Want it installed?"
+
+- **Yes:** if `~/.hermes/SOUL.md` is missing or empty, copy the file there (`cp hermes/SOUL.md ~/.hermes/SOUL.md`). If it already has content, do not replace it: append the repo file's content under a heading such as `## Media buyer persona (Hermes Ad Agent)` at the end of the existing file. Hermes scans the file for prompt-injection patterns and truncates it if it is large, so keep it as shipped. It takes effect from the next session.
+- **No, or no answer:** skip it and note the skip for the Step 8 report. Never install it silently.
+
+`SOUL.md` is identity and tone only. Project paths and workflows stay in `AGENTS.md`, where Step 1 put them.
+
+**Checkpoint 6:** `BRAND.md` exists at the workspace root (from the interview, or the demo copy), it includes Performance Targets (at least a target CPA or target ROAS), and the user has confirmed its contents look right. If it came from the interview, its `## Meta Assets` section names the Meta connection (`mcp` or `cli`) that matches Checkpoint 4. The two memory entries (one in `USER.md`, one in `MEMORY.md`) are saved, or are pending approval if `memory.write_approval` is on.
 
 ---
 
@@ -322,12 +379,16 @@ Run this checklist and record the result of each item:
 4. **Account memory exists:** `memory/accounts/` at the workspace root contains one `act_<ACCOUNT_ID>.md` file per audited account (from Step 5), or Checkpoint 5 recorded why the audit was skipped (demo mode or a brand-new empty account).
 5. **BRAND.md exists at the workspace root** (from Step 6, real or demo).
 6. **Scheduler state:** note whether a reporting job was created (Step 7).
+7. **Project context loads:** the dashboard's Memory > Project Context panel shows this pack's `AGENTS.md` (or the Step 1 Route 2 pointer), not "No project context file found for this workspace".
+8. **Memory entries exist:** `~/.hermes/memories/USER.md` and `~/.hermes/memories/MEMORY.md` each contain the entry from Step 6, or both are sitting in `/memory pending` waiting for the user's approval.
 
 Then **report to your user** in plain language:
 
 - Which skills you installed and what each one is for (one line each).
 - Which Meta route is connected (MCP or CLI) and which ad accounts it can see, and which Arcads account the Arcads MCP maps to.
 - Which ad accounts were audited into memory files at `memory/accounts/` (and which were skipped, with the reason).
+- Whether Hermes now loads the pack's `AGENTS.md` at session start (Route 1 working directory, or the Route 2 pointer), so the user knows to run future sessions from the workspace root.
+- That the two memory entries are saved (or pending, with the `/memory approve` command to run), that they take effect from the next session, and whether the optional media buyer soul was installed, appended, or skipped.
 - The standing safety rules: everything is created paused, nothing is activated and no money is spent without their explicit confirmation, and Arcads generations always come with a credit estimate first.
 - Suggested first commands to try (for example: "research my competitors' ads", "make me 3 image ad concepts", "build and launch a paused campaign").
 
@@ -346,6 +407,12 @@ Then **report to your user** in plain language:
 **`hermes skills install` fails or rejects the repo**: Fall back to the copy method in Step 2. If the hub's security scan returns a warning verdict, show it to the user and let them decide; do not use `--force` without telling them.
 
 **Cron job created but nothing is delivered**: Check `hermes cron list` for the job's status and look at run output under `~/.hermes/cron/output/<job_id>/`. Confirm the `deliver` target is a channel the user has actually connected (Telegram, Discord, Slack, email, etc.).
+
+### Project context and memory
+
+**Project Context panel says "No project context file found for this workspace"**: Hermes's working directory is not the workspace root, so it never sees this repo's `AGENTS.md`. Hermes only looks in the working directory itself (plus the git chain below the git root when inside a repository), never in parent directories. Fix it with Route 1 in Step 1 (set `terminal.cwd` in `config.yaml` to the workspace root's absolute path, then restart the gateway if the panel does not update) or Route 2 (write the pointer `AGENTS.md` into the directory Hermes actually works from). For CLI (TUI) sessions, launch from inside the workspace root.
+
+**Memory entries never show up**: Two usual causes. First, both memory files are injected as a frozen snapshot at session start, so an entry written mid-conversation is invisible until a new session begins; start a fresh session and check again. Second, `memory.write_approval` is `true` in `config.yaml`, so the writes are queued rather than saved; run `/memory pending` to see them and `/memory approve` to accept. If the entry was accepted but is still missing, check that the file did not exceed its cap (1,375 characters for `USER.md`, 2,200 for `MEMORY.md`) and trim other entries if it did.
 
 ### Arcads MCP
 

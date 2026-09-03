@@ -13,7 +13,10 @@ description: >-
   default campaign objective), and budget guardrails including the Arcads
   credit budget per batch, the Meta daily spend cap, and the PAUSED-only
   acknowledgment. It writes BRAND.md to the workspace root (the repo clone
-  directory recorded during setup) and reads it back for confirmation. Use it
+  directory recorded during setup), reads it back for confirmation, then
+  saves a short profile to Hermes memory (one User Profile entry and one
+  Notes entry, no secrets or account IDs) so later sessions start with the
+  essentials. Use it
   on first install, whenever BRAND.md is missing, when another skill routes
   the user here, or when the user says "set up my brand", "brand setup",
   "create my brand file", "onboard my business", "update my brand file",
@@ -226,7 +229,68 @@ Present the finished file to the user section by section and ask them to
 confirm or correct it. Apply corrections, then confirm once more that the
 final version is right. Do not end the flow on an unconfirmed file; if the
 user disappears mid-review, say clearly which sections are confirmed and
-which are still drafts the next session should revisit.
+which are still drafts the next session should revisit. Once the file is
+confirmed, do Step 5 before closing.
+
+## Step 5: Save the essentials to Hermes memory
+
+BRAND.md is the full profile, but Hermes only reads it when a skill opens
+it. Hermes also keeps two small personal memory files that are injected
+into the system prompt of every session: `~/.hermes/memories/USER.md`
+("User Profile" in the dashboard, who the user is and how they want to be
+worked with, cap 1,375 characters) and `~/.hermes/memories/MEMORY.md` ("My
+Notes", the agent's own notes about the environment, cap 2,200
+characters). Use the built-in `memory` tool to write one entry in each so
+the next session knows where the brand lives and how to behave before it
+opens a single file.
+
+1. **User Profile entry** (the `memory` tool, user-profile target), under
+   400 characters, starting with the stable prefix `Hermes Ad Agent:`.
+   Contents: brand name and the one-line offer, the user's role (owner,
+   marketer, agency, or whatever they told you), the preferred reporting
+   channel and cadence (ask now if the interview did not cover it; it is
+   one question), and the sentence "Always confirm before any spend."
+   Example shape:
+   `Hermes Ad Agent: <Brand> sells <one-line offer>. User is the <role>.
+   Reports go to <channel> <cadence>. Always confirm before any spend.`
+2. **Notes entry** (the `memory` tool, notes target), under 500 characters,
+   also starting with `Hermes Ad Agent:`. Contents: the workspace root as
+   an absolute path, the Meta backend (`mcp` or `cli`, from the "Meta
+   connection" field), whether the Arcads MCP is connected, where BRAND.md
+   and `memory/accounts/` live under that root, and the sentence
+   "Everything launches PAUSED." Example shape:
+   `Hermes Ad Agent: workspace root <absolute path>. Meta backend: <mcp or
+   cli>. Arcads MCP: <connected or not connected>. Brand profile at
+   <root>/BRAND.md; account memory at <root>/memory/accounts/. Everything
+   launches PAUSED.`
+3. **Add or replace, never duplicate.** On the first run use the tool's
+   `add` action. On any later run (an update, a re-run, a moved workspace)
+   use `replace`, matching the existing entry by its `Hermes Ad Agent:`
+   prefix as the old text, so each file keeps exactly one entry for this
+   pack. Before writing, check whether an entry with that prefix already
+   exists; if it does, replace it even when the user only said "set up my
+   brand".
+4. **Respect the caps.** Both files hold everything else the agent has
+   remembered too, so stay well under your own limits (400 and 500
+   characters) and never push a file past its cap (1,375 characters for
+   USER.md, 2,200 for MEMORY.md, the `memory.user_char_limit` and
+   `memory.memory_char_limit` config keys). If a write is rejected for
+   size, shorten the entry rather than trimming someone else's.
+5. **Tell the user what just happened.** Both files are loaded as a frozen
+   snapshot at session start, so these entries take effect from the next
+   session, not this one. If `memory.write_approval` is true in
+   `~/.hermes/config.yaml`, the writes sit in `/memory` as pending until
+   the user runs `/memory approve` (or `/memory reject`); say so and ask
+   them to approve. If `memory.memory_enabled` or
+   `memory.user_profile_enabled` is false, skip the matching entry, say
+   which one was skipped, and note it under "## Setup Gaps".
+6. **What never goes in these files:** tokens or any secret, ad account
+   IDs, Page or Instagram IDs, pixel IDs, audience names, verbatim ad copy,
+   performance numbers, or budget figures. Those belong in BRAND.md and the
+   gitignored `memory/accounts/` files at the workspace root. The Hermes
+   memory files carry pointers and behavior rules only. If the user asks
+   you to "remember" one of those values anyway, put it in BRAND.md and
+   explain why.
 
 Close by telling the user what unlocks now: the ad-agent-orchestrator skill
 can run full campaigns, and the creative, copy, and launcher skills will all
@@ -252,6 +316,14 @@ When the user says "update my brand file" or names a specific change:
    route users here to fill "## Performance Targets" when it is empty; in
    that case touch just that section (and the conversion event under
    "## Meta Assets" if it is also unset).
+6. Refresh the two Hermes memory entries with the `memory` tool's
+   `replace` action (Step 5), matching the existing text by its
+   `Hermes Ad Agent:` prefix so nothing is duplicated. Do this whenever the
+   change touches anything those entries carry: brand name, offer, the
+   user's role, reporting channel or cadence, workspace root, Meta backend,
+   or the Arcads connection. If no entry with that prefix exists yet, `add`
+   it instead. The same caps, the frozen-snapshot note, the
+   `memory.write_approval` case, and the no-IDs-no-secrets rule apply.
 
 ## Pitfalls
 
@@ -265,6 +337,11 @@ When the user says "update my brand file" or names a specific change:
   every single time until these are filled in.
 - Do not paste actor or voice catalog dumps into BRAND.md; record only the
   user's stated preferences.
+- Do not put account IDs, audience names, copy, numbers, or any token into
+  the Hermes memory files (USER.md, MEMORY.md); they are pointers and
+  rules only, and they are read into every session's prompt.
+- Do not `add` a second `Hermes Ad Agent:` entry on a re-run; `replace`
+  the existing one.
 
 ## Verification
 
@@ -275,4 +352,6 @@ explicit `(not set)`, the Meta connection field is `mcp`, `cli`, or
 `(not set)` with a Setup Gaps line, at least one performance target (CPA or
 ROAS) plus the default conversion event and campaign objective are present,
 the three budget guardrails and the PAUSED-only acknowledgment are present,
-and the user confirmed the read-back.
+the user confirmed the read-back, and Hermes memory holds exactly one
+`Hermes Ad Agent:` entry in the User Profile and one in Notes (or the user
+was told the writes are pending approval, or that memory is disabled).

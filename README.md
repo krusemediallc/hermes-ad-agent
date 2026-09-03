@@ -33,7 +33,7 @@ Open a chat with your Hermes agent and paste this:
 Set up this repo: https://github.com/krusemediallc/hermes-ad-agent. Read SETUP.md and follow it.
 ```
 
-That's it. The agent installs the skills, walks you through connecting Arcads (MCP) and Meta (MCP or CLI, your choice), audits your ad account's last 90 days into a per-account memory file, then runs a short brand interview so every skill knows who it's writing for. When it finishes, say something like "research my competitors and pitch me three ad concepts" and watch it go.
+That's it. The agent installs the skills, walks you through connecting Arcads (MCP) and Meta (MCP or CLI, your choice), audits your ad account's last 90 days into a per-account memory file, then runs a short brand interview so every skill knows who it's writing for. Setup also wires Hermes's own context and memory (project context, notes, user profile, and an optional soul) so every conversation starts oriented instead of cold; see [docs/hermes-context.md](docs/hermes-context.md). When it finishes, say something like "research my competitors and pitch me three ad concepts" and watch it go.
 
 ## The skills
 
