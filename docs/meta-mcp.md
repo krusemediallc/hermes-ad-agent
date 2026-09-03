@@ -100,8 +100,8 @@ Observed roster, grouped by what the tools do. Names are exact as seen in August
 
 | Tool | Purpose |
 |---|---|
-| `ads_creative_upload_image` | Upload an image to the ad account's library. |
-| `ads_creative_upload_video` | Upload a video to the ad account's library. |
+| `ads_creative_upload_image` | Upload an image to the ad account's library **from a publicly accessible URL** (`image_url`). No local file paths; share links such as Google Drive or Dropbox fail. Arcads asset URLs work directly; a local file needs the CLI (`meta ads creative create --image ./file`) or a hosted URL. |
+| `ads_creative_upload_video` | Upload a video to the ad account's library **from a publicly accessible URL** (`video_url`). Same rules as images. Processing is asynchronous: poll `ads_get_ad_videos` with `video_ids` and `fields: ["status", "picture"]` until `status.video_status` is `ready`. `picture` is the video's own thumbnail; never use another ad's image as a video thumbnail. |
 | `ads_creative_update` | Update a creative. |
 | `ads_creative_delete` | Delete a creative. |
 | `ads_get_creatives` | List creatives in the account. |

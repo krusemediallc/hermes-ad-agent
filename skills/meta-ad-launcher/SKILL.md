@@ -125,7 +125,7 @@ docs/meta-mcp.md and docs/meta-cli.md cover each backend.
 | Create campaign (PAUSED) | `ads_create_campaign` | `meta ads campaign create --name "<name>" --objective <OBJECTIVE> [--daily-budget <minor units>] [--special-ad-categories ...] --status PAUSED --output json` |
 | Create ad set (PAUSED) | `ads_create_ad_set` | `meta ads adset create <CAMPAIGN_ID> --name "<name>" --optimization-goal <GOAL> --billing-event IMPRESSIONS --daily-budget <minor units> --targeting-countries <CC> [--age-min --age-max --genders] [--pixel-id <ID> --custom-event-type <EVENT>] --status PAUSED --output json` |
 | Upload image / video | `ads_creative_upload_image` / `ads_creative_upload_video` | no separate step; `meta ads creative create --image ./file` or `--video ./file` uploads the local file itself |
-| Create creative | `ads_create_creative` | `meta ads creative create --name "<name>" --page-id <PAGE_ID> [--instagram-actor-id <IG_ID>] --image ./file --bodies "..." "..." --titles "..." "..." --descriptions "..." --link-url <URL> --call-to-action <CTA> --output json` (singular `--body/--title/--description` for one variant) |
+| Create creative | `ads_create_creative` (one `message` / `headline` / `description` per creative; no multi-variant parameter) | `meta ads creative create --name "<name>" --page-id <PAGE_ID> [--instagram-actor-id <IG_ID>] --image ./file --bodies "<primary 1>" --bodies "<primary 2>" --titles "<headline 1>" --titles "<headline 2>" --descriptions "<description 1>" --link-url <URL> --call-to-action <CTA> --output json` (repeat each plural flag once per value; singular `--body/--title/--description` for one variant; for video, `--video ./file` with no `--image`, the thumbnail is auto-generated) |
 | Inspect / fix / remove a creative | `ads_get_creatives` / `ads_creative_update` / `ads_creative_delete` | `meta ads creative list`, `get <ID>`, `update <ID>`, `delete <ID>` (each with `--output json`) |
 | Create ad (PAUSED) | `ads_create_ad` | `meta ads ad create <AD_SET_ID> --name "<name>" --creative-id <CREATIVE_ID> --status PAUSED --output json` |
 | Preview an ad | `ads_get_ad_preview` | not available; the user reviews the paused ad in Ads Manager by name or ID |
@@ -483,13 +483,15 @@ and pass them with `@file`.
   the approved copy. When the media is a local file that still needs
   uploading, use the media flags instead of `--object-story-spec`
   (`--image ./file` or `--video ./file` plus `--body` / `--title` /
-  `--description` or their plural forms, `--link-url`,
-  `--call-to-action`) together with `--degrees-of-freedom-spec @dof.json`
-  and the same optional flags. For a multi-variant reference, add
-  `--asset-feed-spec @feed.json` carrying the reference's structure with
-  the approved copy and new media (the plural shortcuts `--bodies`,
-  `--titles`, `--descriptions`, `--images`, `--videos`,
-  `--call-to-actions` are the same field).
+  `--description` or their plural forms, each plural flag repeated once
+  per value, `--link-url`, `--call-to-action`) together with
+  `--degrees-of-freedom-spec @dof.json` and the same optional flags. With
+  `--video`, no `--image` unless the user supplied a custom thumbnail. For
+  a multi-variant reference, add `--asset-feed-spec @feed.json` carrying
+  the reference's structure with the approved copy and new media (the
+  plural shortcuts `--bodies`, `--titles`, `--descriptions`, `--images`,
+  `--videos`, `--call-to-actions`, repeated once per value, are the same
+  field).
 - Ad:
   `meta ads ad create <AD_SET_ID> --name "<name>" --creative-id
   <CREATIVE_ID> --tracking-specs '<json>' --conversion-domain <domain>
@@ -516,17 +518,40 @@ mirrored: say so and list it as a delta.
 
 ## Step 2: Upload the media
 
-**MCP:**
+**MCP:** the two upload tools take a **publicly accessible URL**, not a local
+file path (the server downloads the bytes itself; Google Drive, Dropbox, and
+similar share links fail because they return a sign-in page). In practice:
 
-- **Image:** `ads_creative_upload_image` with the file. Keep the returned
-  image hash or ID for the creative.
-- **Video:** `ads_creative_upload_video` with the file. Keep the returned
-  video ID. **Video processing is asynchronous on Meta's side.** Do not
-  create the ad the same second the upload returns; verify the video shows as
-  ready (check it with `ads_get_ad_videos`, or retry the creative step after
-  a short wait if creation fails with a video-processing error). A video
-  creative also needs a thumbnail image; if the tool schema asks for one and
-  Meta has not auto-generated it yet, wait for processing to finish.
+- **Arcads assets:** pass the asset URL from the Arcads MCP result straight to
+  `ads_creative_upload_image` (`image_url`) or `ads_creative_upload_video`
+  (`video_url`). Keep the returned image hash or video ID.
+- **A local file the user handed you** (a chat attachment saved to disk, an
+  export sitting in the workspace): the MCP cannot upload it. Use the CLI for
+  that creative when it is installed (`meta ads creative create --video ./file`
+  uploads local files), or ask the user for a direct, publicly reachable URL
+  to the file. Never guess a URL and never substitute a different file.
+- **Video processing is asynchronous on Meta's side.** After
+  `ads_creative_upload_video`, poll `ads_get_ad_videos` with `video_ids` and
+  `fields: ["status", "picture"]` until `status.video_status` is `ready`
+  before creating the creative. Do not create the ad the same second the
+  upload returns.
+
+**Video thumbnail rule (both backends).** The thumbnail is the video's own
+frame or a thumbnail the user supplied, never an unrelated image and never
+the image from another ad:
+
+- MCP: prefer creating the ad through `ads_create_ad` with an inline
+  `object_story_spec` whose `video_data` carries `video_id`, the copy, the
+  link, and the CTA and **no** `image_hash` or `image_url`; the tool
+  auto-generates the thumbnail from the first frame. If you use
+  `ads_create_creative` instead (its schema requires a thumbnail for video
+  ads), pass the video's own `picture` URL from `ads_get_ad_videos` as
+  `image_url`. An image ad's hash is never a video thumbnail.
+- CLI: `--video ./file` alone; the thumbnail is auto-generated. Do not add
+  `--image` next to `--video` unless the user supplied a custom thumbnail
+  file, in which case that file, and only that file, is the thumbnail.
+- If the user provided a thumbnail, use it. If not, say in the report that
+  the thumbnail was auto-generated and offer to swap in a custom one.
 
 You can list what already exists in the account with `ads_get_ad_images` and
 `ads_get_ad_videos` when the user wants to reuse previously uploaded media.
@@ -546,18 +571,25 @@ that would upload the video again and leave a duplicate creative.
 then map the approved inputs onto it:
 
 - **Identity:** the Page ID, plus the Instagram account when available.
-- **Asset:** the image hash (image ad) or video ID plus thumbnail (video ad).
+- **Asset:** the image hash (image ad), or the video ID with the thumbnail
+  sourced per the video thumbnail rule in Step 2 (the inline
+  `object_story_spec` path that auto-generates it, or the video's own
+  `picture`).
 - **Link and CTA:** the destination URL and the CTA type from the copy
   handoff (for example `LEARN_MORE`, `SHOP_NOW`, `SIGN_UP`).
-- **Text, multi-variant where supported.** Meta creatives can carry a pool of
-  copy that the delivery system mixes per impression (the concept Meta calls
-  text liquidity or flexible ads: multiple bodies, titles, and descriptions
-  in one creative). If the tool schema accepts arrays of bodies, titles, and
-  descriptions, supply the full approved set: 5 primary texts, 5 headlines,
-  3 descriptions. If the schema only accepts a single body, title, and
-  description, use variant 1 of each, tell the user the server version
-  limited you to one variant, and offer to create additional ads for the
-  other variants instead.
+- **Text: one variant per creative on the MCP.** `ads_create_creative`
+  accepts a single `message`, `headline`, and `description` (verified against
+  its schema; it has no multi-variant or `asset_feed_spec` parameter), so one
+  MCP creative cannot carry the 5 / 5 / 3 set. Meta's flexible-ad pool of
+  bodies, titles, and descriptions in one creative is a CLI or Graph API
+  feature on this pack. **Never silently ship variant 1.** Tell the user
+  before building and choose with them: (a) **one ad per variant** in the
+  same ad set, the default: five PAUSED ads, pairing primary text n with
+  headline n and cycling the three descriptions; (b) build that one creative
+  through the CLI when it is installed, which puts all variants in one
+  creative; or (c) a single ad with variant 1 only, at the user's explicit
+  choice. Report which option ran and exactly how many variants were
+  attached.
 
 **CLI:** run `meta ads creative create` with the same inputs mapped onto
 its flags:
@@ -566,24 +598,33 @@ its flags:
 meta ads creative create --name "<name>" --page-id <PAGE_ID> \
   [--instagram-actor-id <IG_ID>] \
   --image ./file \
-  --bodies "<primary 1>" "<primary 2>" "<primary 3>" "<primary 4>" "<primary 5>" \
-  --titles "<headline 1>" "<headline 2>" "<headline 3>" "<headline 4>" "<headline 5>" \
-  --descriptions "<description 1>" "<description 2>" "<description 3>" \
+  --bodies "<primary 1>" --bodies "<primary 2>" --bodies "<primary 3>" \
+  --bodies "<primary 4>" --bodies "<primary 5>" \
+  --titles "<headline 1>" --titles "<headline 2>" --titles "<headline 3>" \
+  --titles "<headline 4>" --titles "<headline 5>" \
+  --descriptions "<description 1>" --descriptions "<description 2>" \
+  --descriptions "<description 3>" \
   --link-url <URL> --call-to-action <CTA> --output json
 ```
 
 - **Identity:** `--page-id <PAGE_ID>` is required; add
   `--instagram-actor-id <IG_ID>` when the ID is known.
 - **Asset:** `--image ./file` or `--video ./file` (the upload happens here,
-  see Step 2).
+  see Step 2). With `--video`, no `--image` unless the user supplied a custom
+  thumbnail (Step 2 thumbnail rule).
 - **Link and CTA:** `--link-url <URL>` and `--call-to-action <CTA>`.
-- **Text, multi-variant:** the plural flags `--bodies` (max 5), `--titles`
-  (max 5), and `--descriptions` (max 5) each take several quoted values, so
-  the 5/5/3 handoff set fits in one creative. If the installed version
-  rejects the plural flags (check `meta ads creative create --help`), fall
-  back to the singular `--body`, `--title`, and `--description` with
-  variant 1 of each, tell the user the CLI version limited you to one
-  variant, and offer to create additional ads for the other variants.
+- **Text, multi-variant: repeat each plural flag once per value.**
+  `--bodies` (max 5), `--titles` (max 5), and `--descriptions` (max 5) are
+  repeated flags, exactly as Meta's CLI docs show them:
+  `--titles "A" --titles "B"`. Putting several values after one flag
+  (`--titles "A" "B"`) is wrong: the CLI keeps only the first value and
+  rejects the rest as unexpected arguments. Written correctly, the 5 / 5 / 3
+  handoff set fits in one creative. If the command still fails, **stop and
+  show the user the exact error and the exact command** before doing
+  anything else. Do not fall back to a single variant on your own: offer the
+  same choices as the MCP text rule above (one PAUSED ad per variant, or
+  variant 1 only at the user's explicit choice), and report exactly how many
+  variants were attached.
 
 **Mirror mode:** the creative also carries the reference's
 `degrees_of_freedom_spec` verbatim (`degrees_of_freedom_spec` as a JSON
