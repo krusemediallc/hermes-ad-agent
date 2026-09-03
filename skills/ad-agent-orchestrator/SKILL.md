@@ -32,7 +32,7 @@ or ledgers; the run folder plus the conversation is the record.
 ## The three rails
 
 These are non-negotiable and apply at every stage. Repeat them to yourself
-before any tool call that generates media or touches Meta.
+before any tool call or CLI command that generates media or touches Meta.
 
 1. **Money is confirmed before it is spent.** Before any Arcads generation,
    present a credit estimate (model, count, duration or resolution, estimated
@@ -44,9 +44,10 @@ before any tool call that generates media or touches Meta.
    delivery, or change a budget or spend setting without explicit confirmation
    given in the current conversation. Approval of one action never carries
    over to another action, and never carries over from a previous session.
-3. **Never invent a number.** Report only what an MCP tool actually returned.
-   No estimated results presented as measured, no filled-in gaps, no invented
-   benchmarks. If a metric is missing, say it is missing.
+3. **Never invent a number.** Report only what the Meta or Arcads tools
+   actually returned. No estimated results presented as measured, no
+   filled-in gaps, no invented benchmarks. If a metric is missing, say it is
+   missing.
 
 ## Before you start
 
@@ -54,14 +55,22 @@ before any tool call that generates media or touches Meta.
    audience, voice, claims rules, budget guardrails). If it is missing or
    clearly incomplete, offer to run the `brand-setup` skill first and pause
    the campaign until it exists.
-2. Confirm both MCP servers are connected by checking your actually available
-   tool list: you need the Meta Ads MCP tools (names like
-   `ads_get_ad_accounts`, `ads_create_campaign`) and the Arcads MCP tools
-   (names like `arcads_generate_image_nano_banana`, `arcads_watch_asset`).
-   Tool names and availability differ between server versions, so always
-   verify against the live tool list rather than assuming a documented name
-   exists. If a server is missing, tell the user which stages are blocked and
-   what still works.
+2. Confirm both backends are live by checking what is actually available.
+   Arcads: your live tool list must contain the Arcads MCP tools (names like
+   `arcads_generate_image_nano_banana`, `arcads_watch_asset`). Meta: if the
+   tool list contains tools named `ads_*` (for example
+   `ads_get_ad_accounts`, `ads_create_campaign`), the Meta Ads MCP server is
+   connected; otherwise run `meta auth status` in the terminal and, if it
+   reports a token, `meta ads adaccount list --output json`. If that returns
+   accounts, the Meta Ads CLI (Meta's official command-line tool for the
+   Marketing API) is configured. If both work, prefer the MCP. Tool names
+   and availability differ between server versions, and flags differ
+   between CLI versions, so verify against the live tool list and `--help`
+   output rather than assuming a documented name exists. Say once which
+   Meta backend is in use and record it in `run-log.md`. If Meta is missing,
+   Research, Launch, and Monitor are blocked but Create and Copy still
+   work; if Arcads is missing, Create is blocked but the other stages still
+   work with creative files the user supplies. Tell the user either way.
 3. Create the run folder at the workspace root:
    `ad-runs/<YYYY-MM-DD>-<campaign-slug>/`. Start a `run-log.md` inside it.
    The run folder holds only what this skill itself writes: `brief.md`,
@@ -109,6 +118,10 @@ Skip when the user already knows what they want. Otherwise invoke
 to pull competitor and category ads and summarizes hooks, angles, formats,
 and offers into `research/BRIEF-<date>.md` at the workspace root. That file
 stays where the research skill wrote it; add its path to `run-log.md`.
+
+The Ad Library is not exposed by the Meta Ads CLI. On a CLI-only install this
+stage is skipped, or done from reference ads the user supplies; the research
+skill explains its fallbacks. Note which in `run-log.md`.
 
 Two honesty rules: Ad Library presence and longevity suggest an advertiser
 keeps running an ad, but they are not evidence of spend, conversions, or
@@ -184,11 +197,14 @@ brief. Before it creates anything, present the full launch plan in one block:
 everything with `status: PAUSED` at every level, campaign, ad set, and ad.
 It must never create anything ACTIVE, and you must never call
 `ads_activate_entity` or change a status or budget through
-`ads_update_entity` as part of a launch.
+`ads_update_entity`, or run `meta ads ... update --status ACTIVE` or
+`--daily-budget` on the CLI, as part of a launch.
 
 Artifact: a launch section in `run-log.md` listing every created entity ID,
-its status (PAUSED), and the ad preview links if available. Tell the user
-everything is paused and how to review it in Ads Manager.
+its status (PAUSED), and the ad preview links if available (the MCP can
+fetch previews; the CLI cannot, so on that route the user reviews the
+paused ads in Ads Manager by name or ID). Tell the user everything is
+paused and how to review it in Ads Manager.
 
 If the user later asks to turn the ads on: restate exactly which entities
 will go ACTIVE and what the daily budget will be, get an explicit
@@ -198,8 +214,9 @@ it never gets softened.
 ### Stage 6: Monitor
 
 Invoke `meta-performance-loop` for on-demand performance reads. It uses the
-Meta insights tools and writes dated reports to its own documented location;
-link each report's path from `run-log.md`.
+Meta insights tools (MCP) or `meta ads insights get` (CLI) and writes dated
+reports to its own documented location; link each report's path from
+`run-log.md`.
 
 For recurring check-ins, offer to schedule a Hermes cron job (for example a
 daily read delivered back to the chat where it was created). A scheduled job
@@ -207,7 +224,7 @@ may only read and report. It must never activate, pause, scale, or change
 budgets on its own; any action it recommends comes back to the user as a
 proposal requiring fresh confirmation.
 
-Rail 3 rules this stage: every number in a report is one an MCP tool
+Rail 3 rules this stage: every number in a report is one a Meta tool
 returned, cited with its date range. Recommendations are proposals only.
 
 ## Resume an interrupted run
@@ -223,8 +240,10 @@ or "pick up the launch":
    furthest complete artifact tells you roughly where the run stopped.
 3. Before redoing anything with a cost or a side effect, reconcile with the
    live systems: check pending Arcads assets with `arcads_watch_asset` using
-   the asset IDs in `run-log.md`, and check what already exists on Meta with
-   `ads_get_ad_entities` against the entity IDs in `run-log.md`. Never
+   the asset IDs in `run-log.md`, and check what already exists on Meta
+   against the entity IDs in `run-log.md` (MCP: `ads_get_ad_entities`; CLI:
+   `meta ads campaign|adset|ad list --output json`, or
+   `meta ads <resource> get <ID> --output json` for one entity). Never
    regenerate or re-launch just because the conversation was cut off.
 4. Summarize what is done and what is next, then ask the user where to pick
    up. Approvals do not survive the interruption: any gate whose action has

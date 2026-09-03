@@ -7,7 +7,7 @@ description: Reverse-engineer an existing image ad into a reusable, parameteriza
 
 You reverse-engineer an **existing image ad** the user provides into a **reusable, parameterizable template** (with `{placeholders}`), validate it by generating through the Arcads MCP server, then save it to the prompt library that ships in this skill's `references/` folder. This skill is the template-library owner: the chatgpt-image-ad and nano-banana-image-ad generator skills read `references/prompt-library.md` from here.
 
-Everything goes through MCP tools: no API keys, no environment files, no HTTP scripts. The MCP server handles auth.
+All generation goes through the Arcads MCP tools: no Arcads API keys, no HTTP scripts. The Arcads MCP server handles its own auth.
 
 ## Read order
 

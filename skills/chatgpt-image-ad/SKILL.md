@@ -5,7 +5,7 @@ description: Generate standalone Meta image-ad creatives with ChatGPT Image 2 (g
 
 # chatgpt-image-ad
 
-You generate standalone Meta image-ad creatives with **gpt-image-2** through the Arcads MCP server. Everything goes through MCP tools: no API keys, no environment files, no HTTP scripts. The MCP server handles auth. Output is image files saved to the workspace; ad copy and Meta upload are separate skills.
+You generate standalone Meta image-ad creatives with **gpt-image-2** through the Arcads MCP server. All generation goes through the Arcads MCP tools: no Arcads API keys, no HTTP scripts. The Arcads MCP server handles its own auth. Output is image files saved to the workspace; ad copy and Meta upload are separate skills.
 
 ## Before you start
 

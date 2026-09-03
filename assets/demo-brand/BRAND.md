@@ -95,6 +95,7 @@
 <!-- Placeholders. Replace with real values only in a private workspace-root
      BRAND.md, never in this committed demo file. -->
 
+- **Meta connection:** (not set) <!-- mcp or cli, whichever route you connected in SETUP.md Step 4 -->
 - **Ad account ID:** YOUR_AD_ACCOUNT_ID
 - **Page ID:** YOUR_PAGE_ID
 - **Instagram account ID:** YOUR_IG_ACCOUNT_ID
@@ -152,6 +153,8 @@
 
 - Meta Assets IDs are placeholders; replace with real IDs in a private
   workspace-root BRAND.md before launching.
+- Meta connection not recorded; brand-setup fills it in (mcp or cli) once a
+  Meta backend is connected.
 - Landing page URL is an example.com placeholder and must be swapped for a real
   URL before any launch.
 - Arcads product ID not set; register or pick a product in your Arcads
@@ -161,3 +164,5 @@
 
 - 2026-08-24: Rewritten to the canonical BRAND.md schema; added Performance
   Targets (demo values), Arcads Assets, Setup Gaps, and Changelog sections.
+- 2026-09-02: Added the Meta connection field (the pack now supports the Meta
+  Ads MCP server or the Meta Ads CLI).

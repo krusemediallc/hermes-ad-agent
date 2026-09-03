@@ -23,6 +23,8 @@ Never guess a page. Accepted resolutions:
 | Brand name where exactly one returned page is an exact normalized name match | Keyword search via `ads_library_search`, then exact match on `page_name` | High |
 | User picks a page ID from candidates you presented | User-confirmed | Explicit |
 
+On a CLI-only install (no `ads_library_search`), resolution is by explicit ID or user confirmation only; the keyword-search route is unavailable.
+
 Normalization means case, punctuation, and spacing only. Refuse: substring or starts-with matches, "closest" or "most ads" heuristics, multiple pages sharing the exact normalized name (ask the user), and any candidate that requires a judgment call. When unresolved, keep up to ten candidate pages (name, ID, sample ad count) as evidence for the user and move on.
 
 ## 3. Data contract per ad

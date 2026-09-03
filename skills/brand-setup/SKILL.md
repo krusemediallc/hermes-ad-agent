@@ -4,19 +4,20 @@ description: >-
   Guided brand interview that creates or updates BRAND.md, the brand profile
   every Hermes Ad Agent skill reads before doing research, creative, copy, or
   launches. It auto-discovers what it can first (ad accounts, Facebook Pages,
-  and Instagram accounts through the Meta Ads MCP; products, actors, and
-  voices through the Arcads MCP; brand voice drafted from the user's website
-  when a web tool is available), then interviews the user for the rest: offer,
-  audience, tone, claims and compliance rules, performance targets (target CPA
-  or target ROAS plus the conversion event and default campaign objective),
-  and budget guardrails including the Arcads credit budget per batch, the Meta
-  daily spend cap, and the PAUSED-only acknowledgment. It writes BRAND.md to
-  the workspace root (the repo clone directory recorded during setup) and
-  reads it back for confirmation. Use it on first install, whenever BRAND.md
-  is missing, when another skill routes the user here, or when the user says
-  "set up my brand", "brand setup", "create my brand file", "onboard my
-  business", "update my brand file", "change my brand voice", "we have a new
-  offer", or "my spend cap changed".
+  and Instagram accounts through whichever Meta backend is connected, the Meta
+  Ads MCP or the Meta Ads CLI, and records which Meta connection is live;
+  products, actors, and voices through the Arcads MCP; brand voice drafted
+  from the user's website when a web tool is available), then interviews the
+  user for the rest: offer, audience, tone, claims and compliance rules,
+  performance targets (target CPA or target ROAS plus the conversion event and
+  default campaign objective), and budget guardrails including the Arcads
+  credit budget per batch, the Meta daily spend cap, and the PAUSED-only
+  acknowledgment. It writes BRAND.md to the workspace root (the repo clone
+  directory recorded during setup) and reads it back for confirmation. Use it
+  on first install, whenever BRAND.md is missing, when another skill routes
+  the user here, or when the user says "set up my brand", "brand setup",
+  "create my brand file", "onboard my business", "update my brand file",
+  "change my brand voice", "we have a new offer", or "my spend cap changed".
 ---
 
 # Brand setup
@@ -53,9 +54,11 @@ Ground rules for the whole flow:
 
 - Never invent a value. A field you cannot discover or the user does not
   answer is written as `(not set)`, not guessed.
-- Never store secrets. The MCP servers handle their own auth; BRAND.md holds
-  business facts and the user's own account identifiers only, and only after
-  the user confirms them.
+- Never store secrets. The MCP servers handle their own auth, and the Meta Ads
+  CLI (Meta's official command-line tool for the Marketing API) keeps its
+  token in a gitignored `.env`; BRAND.md holds business facts and the user's
+  own account identifiers only, never a token, and only after the user
+  confirms them.
 - Keep the interview conversational: two or three questions per message, not
   a wall of twenty.
 
@@ -66,7 +69,18 @@ available tool list before each block; tool names and availability differ
 between MCP server versions, so verify against the live list rather than
 assuming a documented name exists.
 
-**Meta Ads MCP** (tools named `ads_*`):
+**Meta backend** (the Meta Ads MCP server or the Meta Ads CLI):
+
+Detect which one is live before calling anything. If your live tool list
+contains tools named `ads_*` (for example `ads_get_ad_accounts`), the Meta
+MCP is connected: use it. Otherwise run `meta auth status` in the terminal;
+if it reports a token, run `meta ads adaccount list --output json`, and if
+that returns accounts the Meta Ads CLI is configured: use it. If both are
+available, prefer the MCP. Say once which backend you are using. Trust the
+live tool schema over the tool names written here, and trust `--help` output
+over the CLI flags written here; server and CLI versions differ.
+
+On the MCP route:
 
 1. `ads_get_ad_accounts` to list the ad accounts the connected Meta login can
    use. If there are several, show them by name and ask which is the default
@@ -77,10 +91,26 @@ assuming a documented name exists.
 3. `ads_get_ig_accounts` to find linked Instagram accounts. Ask which one, if
    any, ads should publish under.
 
+On the CLI route:
+
+1. `meta ads adaccount list --output json` to list the ad accounts the system
+   user can use. If there are several, show them by name and ask which is the
+   default for ad work. The CLI's `AD_ACCOUNT_ID` (in the workspace `.env`,
+   `act_` form) should be that default; if the user picks a different
+   account, tell them to update `.env`, or that skills will pass
+   `--ad-account-id` on each call.
+2. `meta ads page list --output json` to find the Facebook Pages the system
+   user was assigned. Ask which Page is the default identity.
+3. The CLI has no Instagram account listing. Ask the user for the Instagram
+   account ID (Meta Business Settings, Instagram accounts) or leave it
+   `(not set)`.
+
 Record the chosen names and IDs exactly as the tools returned them, only
-after the user confirms each pick. If the Meta Ads MCP is not connected,
-note that in the file's "## Setup Gaps" section and continue; the interview
-still works without it.
+after the user confirms each pick. Record the live backend as the "Meta
+connection" field under "## Meta Assets": `mcp` or `cli`. If neither
+backend is connected, write `(not set)` there, note it in the file's
+"## Setup Gaps" section, and continue; the interview still works without
+it.
 
 **Arcads MCP** (tools named `arcads_*`), if its tools exist in this session:
 
@@ -159,9 +189,11 @@ answered and asking only for what is missing.
    identical; if neither exists, use the schema listed at the top of this
    skill): same H2 sections, same order, same heading names. Other skills
    parse this file by its headings.
-2. Fill every field with the confirmed value or `(not set)`. Anything left
-   `(not set)` also gets a line under "## Setup Gaps" so a later session
-   knows what to revisit.
+2. Fill every field with the confirmed value or `(not set)`. The "Meta
+   connection" field under "## Meta Assets" is written from Step 1
+   discovery (`mcp` or `cli`), not asked. Anything left `(not set)` also
+   gets a line under "## Setup Gaps" so a later session knows what to
+   revisit.
 3. Add the first Changelog entry under "## Changelog" ("<date>: Initial
    setup via brand-setup").
 4. Write the file to the workspace root (the repo clone directory recorded
@@ -188,7 +220,9 @@ When the user says "update my brand file" or names a specific change:
 2. Ask what changed, or apply the change they already named. Touch only the
    relevant sections; do not re-run the whole interview.
 3. Re-run the matching discovery step only when the change involves connected
-   assets (a new ad account, Page, Instagram account, or Arcads product).
+   assets (a new ad account, Page, Instagram account, or Arcads product) or
+   the Meta connection changed (for example the user moved from the CLI to
+   the MCP); update the "Meta connection" field to match.
 4. If the change touches budget guardrails, re-read the new numbers back
    explicitly before saving; these fields gate real spending. The PAUSED-only
    acknowledgment never gets removed, only re-affirmed.
@@ -216,7 +250,8 @@ When the user says "update my brand file" or names a specific change:
 Before you call the flow done: `BRAND.md` exists at the workspace root (the
 repo clone directory recorded during setup), its headings match the
 canonical template exactly, every field is either a confirmed value or an
-explicit `(not set)`, at least one performance target (CPA or ROAS) plus the
-default conversion event and campaign objective are present, the three
-budget guardrails and the PAUSED-only acknowledgment are present, and the
-user confirmed the read-back.
+explicit `(not set)`, the Meta connection field is `mcp`, `cli`, or
+`(not set)` with a Setup Gaps line, at least one performance target (CPA or
+ROAS) plus the default conversion event and campaign objective are present,
+the three budget guardrails and the PAUSED-only acknowledgment are present,
+and the user confirmed the read-back.

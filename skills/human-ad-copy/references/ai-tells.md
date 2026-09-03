@@ -190,7 +190,7 @@ Treat the flag as a request for a claim record:
 
 If the evidence is absent, cut or narrow the claim. Do not hide it behind
 `may`, `can help`, or `designed to`. Performance figures must come from the
-user, BRAND.md, or an MCP tool result. Never invent them.
+user, BRAND.md, or a Meta tool result (MCP or CLI). Never invent them.
 
 ## 5. Formatting cues
 

@@ -13,3 +13,12 @@ outputs/
 
 # Python
 __pycache__/
+
+# Meta Ads CLI credentials (Route B). Never commit.
+.env
+.env.*
+!.env.example
+
+# Local-only working notes on the maintainer's machine (not part of the public pack)
+ARCHITECTURE.md
+SESSION_LOG.md

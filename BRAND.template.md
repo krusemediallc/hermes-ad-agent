@@ -46,6 +46,7 @@
 
 ## Meta Assets
 
+- **Meta connection:** (not set) <!-- mcp or cli: which Meta backend was live at setup (Meta Ads MCP server or Meta Ads CLI). Skills re-detect at runtime; this is a hint. -->
 - **Ad account ID:** (not set)
 - **Page ID:** (not set)
 - **Instagram account ID:** (not set)
@@ -87,8 +88,9 @@
 
 ## Setup Gaps
 
-<!-- Unfilled fields and anything discovery could not reach (for example, an MCP
-     server not connected during setup). The brand-setup skill revisits these. -->
+<!-- Unfilled fields and anything discovery could not reach (for example, the
+     Arcads MCP or a Meta backend not connected during setup). The brand-setup
+     skill revisits these. -->
 
 - (none)
 

@@ -1,26 +1,35 @@
 ---
 name: meta-performance-loop
 description: >-
-  Answers on-demand Meta ads performance questions through the official Meta
-  Ads MCP insights tools: pulls spend, results, CPA, ROAS, and trend data for
-  a chosen window, compares the numbers against the goals in the user's
-  BRAND.md, identifies the top and bottom creatives, and returns a readable
-  report with 2 to 4 concrete recommendations, each mapped to an action
-  another skill can execute (new creative variants, pausing a loser with
-  confirmation, shifting budget with confirmation). Use it whenever the user
-  asks things like "how did my ads do last 30 days?", "check my ad
-  performance", "which ads are winning?", "what's my CPA this week?", "are my
-  ads profitable?", "give me a performance report", or "should I kill any
-  ads?". Read-only by default: it never pauses, activates, or edits anything
-  itself; it hands recommended actions back to the user for confirmation.
+  Answers on-demand Meta ads performance questions through whichever Meta
+  backend is connected (the Meta Ads MCP insights tools or the Meta Ads
+  CLI's `meta ads insights get`): pulls spend, results, CPA, ROAS, and trend
+  data for a chosen window, compares the numbers against the goals in the
+  user's BRAND.md, identifies the top and bottom creatives, and returns a
+  readable report with 2 to 4 concrete recommendations, each mapped to an
+  action another skill can execute (new creative variants, pausing a loser
+  with confirmation, shifting budget with confirmation). Use it whenever the
+  user asks things like "how did my ads do last 30 days?", "check my ad
+  performance", "which ads are winning?", "what's my CPA this week?", "are
+  my ads profitable?", "give me a performance report", or "should I kill
+  any ads?". Read-only by default: it never pauses, activates, or edits
+  anything itself; it hands recommended actions back to the user for
+  confirmation.
 ---
 
 # Meta performance loop
 
-You answer performance questions with numbers the Meta Ads MCP actually
-returned, judged against the user's own goals, and you finish with
+You answer performance questions with numbers the Meta tools (MCP or CLI)
+actually returned, judged against the user's own goals, and you finish with
 recommendations the user can act on in one reply. You do not change anything
 on Meta from inside this skill.
+
+Two Meta backends are supported and the workflow is the same on both: the
+Meta Ads MCP server (insights tools named `ads_insights_*`) or the Meta Ads
+CLI (Meta's official command-line tool for the Marketing API, binary
+`meta`, run in the terminal with `--output json`). Detect which one is live
+(Prerequisites), say once which one you are using, then make the matching
+calls from the Backend reference below.
 
 ## Hard rules
 
@@ -30,10 +39,11 @@ on Meta from inside this skill.
    happens after the user explicitly confirms; execution then follows the
    rules of the acting skill (`meta-ad-launcher` for status changes, the
    Arcads creative skills for new assets).
-2. **Never fabricate a number.** Every metric in your report came from an MCP
-   tool result in this session. No estimates presented as measurements, no
-   filled-in gaps, no invented benchmarks. If a metric is missing or a tool
-   failed, say exactly that.
+2. **Never fabricate a number.** Every metric in your report came from a
+   result the Meta tools (MCP or CLI) actually returned in this session. No
+   estimates presented as measurements, no filled-in gaps, no invented
+   benchmarks. If a metric is missing, a tool failed, or the backend has no
+   tool for it, say exactly that.
 3. **Goals come from the user, not from you.** Judge performance against the
    targets in BRAND.md's "## Performance Targets" section (target CPA or
    target ROAS, plus the "## Budget Guardrails" daily spend cap) or
@@ -53,12 +63,26 @@ on Meta from inside this skill.
 
 ## Prerequisites
 
-- **Meta Ads MCP connected.** Check your live tool list for the insights
-  tools: `ads_insights_performance_trend`, `ads_insights_anomaly_signal`,
-  `ads_insights_advertiser_context`, and helpers like `ads_get_ad_entities`.
-  Tool names and availability differ between server versions; always trust
-  your live tool list over the names in this file, and use the closest
-  available equivalent when a documented name is missing.
+- **Meta backend connected.** Detect it in this order:
+  1. If your live tool list contains tools named `ads_*` (for this skill:
+     `ads_insights_performance_trend`, `ads_insights_anomaly_signal`,
+     `ads_insights_advertiser_context`, and helpers like
+     `ads_get_ad_entities`), the Meta MCP is connected: use the MCP backend.
+  2. Otherwise, in the terminal, run `meta auth status`; if it reports a
+     token, run `meta ads adaccount list --output json`. If that returns
+     accounts, the Meta Ads CLI is configured: use the CLI backend. Its
+     calls for this skill are `meta ads insights get`,
+     `meta ads campaign|adset|ad list`, and `meta ads <resource> get`,
+     always with `--output json`.
+  3. If neither works, stop and tell the user Meta is not connected yet
+     (the pack's SETUP.md Step 4 covers both routes).
+
+  If both are available, prefer the MCP (anomaly signals, advertiser
+  context, and benchmarks exist only there). Say once which backend you are
+  using. Tool names and availability differ between server versions; always
+  trust your live tool list over the names in this file, use the closest
+  available equivalent when a documented name is missing, and on the CLI
+  trust `--help` output over the flags written here.
 - **BRAND.md** at the workspace root (the repo clone directory recorded
   during setup). Read the target CPA or target ROAS from its
   "## Performance Targets" section; the conversion event, ad account, and
@@ -69,26 +93,66 @@ on Meta from inside this skill.
   to fill in a target CPA or ROAS; you can still report raw numbers without
   it, but say the comparison-to-goal section is unavailable.
 
+## Backend reference
+
+Every Meta call this skill makes, in both forms. MCP tool names come from
+your live tool list; CLI flags come from `--help` (versions differ, and when
+this table and `--help` disagree, `--help` wins). Always pass
+`--output json` on the CLI. In the CLI column, `<resource>` is `campaign`,
+`adset`, or `ad`. For humans who want the full picture, the repo's
+docs/meta-mcp.md and docs/meta-cli.md cover each backend.
+
+| Purpose | Meta MCP tool | Meta Ads CLI command |
+|---|---|---|
+| List ad accounts | `ads_get_ad_accounts` | `meta ads adaccount list --output json` (configured account: `meta ads adaccount current`) |
+| Read campaigns / ad sets / ads | `ads_get_ad_entities` | `meta ads campaign list --output json`, `meta ads adset list --output json`, `meta ads ad list --output json` (add `--status`, `--limit`, `--fields` as needed); single entity: `meta ads <resource> get <ID> --output json` |
+| Performance over a window | `ads_insights_performance_trend` | `meta ads insights get --date-preset last_7d --fields spend,impressions,clicks,ctr,cpc,conversions,cost_per_conversion,purchase_roas --time-increment daily --output json` (account level by default) |
+| Scope to one entity | the entity parameters of `ads_insights_performance_trend` | add `--campaign-id <ID>`, `--adset-id <ID>`, or `--ad-id <ID>` to the command above |
+| Per-ad ranking | the per-ad breakdown from `ads_insights_performance_trend` | check `meta ads insights get --help` for an entity-level option; if there is none, list the ads (`meta ads ad list --output json`) and call insights once per `--ad-id` |
+| Anomalies | `ads_insights_anomaly_signal` | not available; compare `--date-preset yesterday` against a `last_7d` daily series yourself and label it as your own comparison |
+| Advertiser context | `ads_insights_advertiser_context` | not available; report the section as unavailable |
+| Benchmarks | `ads_insights_industry_benchmark` / `ads_insights_auction_ranking_benchmarks` | not available; report the section as unavailable |
+| Opportunity score | `ads_get_opportunity_score` | not available; report the section as unavailable |
+| Delivery / rejection errors | `ads_get_errors` | `meta ads <resource> get <ID> --output json`, read `effective_status` and `issues_info` |
+
+More `meta ads insights get` options, all from `--help`: `--date-preset`
+takes `today`, `yesterday`, `last_3d`, `last_7d`, `last_14d`, `last_30d`,
+`last_90d`, `this_month`, or `last_month`; `--since YYYY-MM-DD --until
+YYYY-MM-DD` (always together) replaces the preset for a custom range;
+`--time-increment` takes `all_days`, `daily`, `weekly`, or `monthly`;
+`--fields` also accepts `reach`, `frequency`, and `cpm`; `--breakdown`
+(repeatable) takes `age`, `gender`, `country`, `publisher_platform`,
+`device_platform`, `platform_position`, or `impression_device`;
+`--sort spend_descending` orders rows; `--limit` defaults to 50.
+
 ## Workflow
 
 ### 1. Scope the question
 
 Pin down four things before pulling data:
 
-- **Account:** from BRAND.md, or `ads_get_ad_accounts` if ambiguous.
+- **Account:** from BRAND.md, or `ads_get_ad_accounts` (MCP) or
+  `meta ads adaccount list --output json` (CLI) if ambiguous. On the CLI,
+  the `AD_ACCOUNT_ID` in the workspace `.env` must be that account, or pass
+  `--ad-account-id` on each command.
 - **Window:** what the user asked for ("last 30 days", "this week",
-  "yesterday"). Default to the last 7 days when unstated, and say so.
+  "yesterday"). Default to the last 7 days when unstated, and say so. On the
+  CLI, map the window to a `--date-preset` (`yesterday`, `last_7d`,
+  `last_30d`, `this_month`, and so on) or to `--since YYYY-MM-DD --until
+  YYYY-MM-DD` for anything the presets do not cover.
 - **Level:** whole account, one campaign, one ad set, or specific ads. Use
-  `ads_get_ad_entities` to resolve names the user mentions into IDs and to
-  see what is currently ACTIVE versus PAUSED.
+  `ads_get_ad_entities` (MCP) or `meta ads campaign list --output json`,
+  `meta ads adset list --output json`, and `meta ads ad list --output json`
+  (CLI) to resolve names the user mentions into IDs and to see what is
+  currently ACTIVE versus PAUSED.
 - **Result metric:** the conversion event (from "## Meta Assets") and
   whether the user thinks in CPA or ROAS terms (whichever target
   "## Performance Targets" sets; otherwise ask once).
 
 ### 2. Pull the data
 
-Use the insights tools, checking each one's live schema for its actual
-parameters:
+**MCP.** Use the insights tools, checking each one's live schema for its
+actual parameters:
 
 - `ads_insights_performance_trend`: the workhorse. Pull spend, impressions,
   clicks, results, and cost metrics over the window, at the level you scoped.
@@ -106,6 +170,33 @@ parameters:
   (present these as Meta's suggestions, not your endorsement), and
   `ads_get_errors` for delivery or rejection problems that would explain a
   performance gap.
+
+**CLI.** `meta ads insights get` is the one insights command, so the pull
+looks like this:
+
+- **Aggregate over the window:** `meta ads insights get --date-preset
+  last_7d --fields spend,impressions,clicks,ctr,cpc,conversions,cost_per_conversion,purchase_roas
+  --time-increment daily --output json`. It runs at account level by
+  default; add `--campaign-id <ID>`, `--adset-id <ID>`, or `--ad-id <ID>` to
+  scope it. `--time-increment daily` gives the day-by-day series;
+  `all_days` gives one total row. Swap the preset for `--since` and
+  `--until` when the user's window is not a preset.
+- **Per-ad ranking:** check `meta ads insights get --help` for an
+  entity-level option that returns one row per ad. If there is none, list
+  the ads (`meta ads ad list --output json`) and call insights once per
+  `--ad-id`, then rank the rows yourself. `--sort spend_descending` and
+  `--limit` help when the account is large.
+- **Anomalies:** not available on the CLI. Compare `--date-preset
+  yesterday` against the `last_7d` daily series yourself, and label any
+  swing you flag as your own comparison, not a Meta signal.
+- **Advertiser context, benchmarks, opportunity score:** MCP only. On the
+  CLI, say those sections are unavailable rather than skipping them.
+- **Delivery or rejection problems:** `meta ads <resource> get <ID>
+  --output json`, then read `effective_status` and `issues_info`.
+
+Spend comes back in the ad account's currency on both backends. Keep that
+separate from budgets: any budget change you later recommend is set on the
+CLI in minor units (5000 is 50.00), so state the human amount in the report.
 
 When comparing two windows (for example this week versus last week), compare
 efficiency metrics (CPA, ROAS, CTR), and never present volume totals from
@@ -133,6 +224,7 @@ the run folder when this is part of an orchestrated campaign run):
 
 ```markdown
 ## Meta performance: <scope>, <date range>
+Backend: MCP | CLI
 
 **Totals:** spend <amount> | <results label>: <count> | CPA <amount> (target: <target>) | ROAS <x> (target: <x>)
 **Verdict vs goals:** <one plain sentence>
@@ -145,7 +237,8 @@ the run folder when this is part of an orchestrated campaign run):
 (worst 2 to 3 rows, same columns)
 
 ### Notable
-- <anomalies, delivery errors, rejected ads, benchmark context; omit if none>
+- <anomalies, delivery errors, rejected ads, benchmark context; omit if none;
+  on the CLI, name the MCP-only sections as unavailable>
 
 ### Recommendations
 1. ...
@@ -165,14 +258,19 @@ number 2":
   so that flow will show you a credit estimate first."
 - **Pause a loser:** "Ad Y spent <amount> at <CPA>, <n>x your target.
   Recommend pausing it. Action: with your confirmation, `meta-ad-launcher`
-  pauses it via the Meta MCP. Nothing is paused until you confirm."
+  pauses it via the Meta backend (MCP `ads_update_entity` or CLI
+  `meta ads ad update <ID> --status PAUSED`). Nothing is paused until you
+  confirm."
 - **Shift budget:** "Ad set Z outperforms ad set W. Recommend moving <amount>
-  per day. Action: with your confirmation, the budget is updated via the Meta
-  MCP; the new totals stay under your <cap> daily cap." Budget changes always
-  require explicit confirmation and a restated number.
+  per day. Action: with your confirmation, the budget is updated via the
+  Meta backend (MCP `ads_update_entity` or CLI
+  `meta ads adset update <ID> --daily-budget <minor units>`, where 5000 is
+  50.00); the new totals stay under your <cap> daily cap." Budget changes
+  always require explicit confirmation and a restated number.
 - **Fix a delivery problem:** "Ad Q is rejected / erroring per
-  `ads_get_errors`. Recommend <fix>. Action: rebuild or edit the creative,
-  then relaunch PAUSED."
+  `ads_get_errors` (MCP) or its `effective_status` and `issues_info` from
+  `meta ads ad get <ID> --output json` (CLI). Recommend <fix>. Action:
+  rebuild or edit the creative, then relaunch PAUSED."
 
 If the user confirms an action, hand off to the right skill; do not perform
 mutations from inside this skill.
@@ -189,3 +287,6 @@ mutations from inside this skill.
   version, with the raw numbers preserved accurately inside it.
 - Do not carry numbers from memory of past sessions; pull fresh data every
   time.
+- On the CLI, a section that depends on an MCP-only tool (anomalies,
+  advertiser context, benchmarks, opportunity score) is reported as
+  unavailable, not silently skipped.

@@ -1,11 +1,11 @@
 ---
 name: competitor-ad-research
-description: Researches competitor ads through the Meta Ads MCP server's ads_library_search tool, pulls each competitor's running ads from the Meta Ad Library (full copy variants, delivery metadata, ad archive links), analyzes angles, hooks, formats, and offers, ranks every ad with a 100-point adaptation-leverage score, and writes a dated research brief (research/BRIEF-<date>.md) containing top competitors, their running ads, scored opportunities, and 3 to 5 concrete creative briefs ready to hand to the Hermes Ad Agent image and video generation skills. Use when the user asks to research competitors, spy on competitor ads, see what ads a brand or niche is running, pull or search the Meta Ad Library, find long-running competitor creative, build a swipe file, or prepare a competitor research brief before making new ads. Research only, it does not generate creatives or publish anything to Meta.
+description: Researches competitor ads through the Meta Ads MCP server's ads_library_search tool, pulls each competitor's running ads from the Meta Ad Library (full copy variants, delivery metadata, ad archive links), analyzes angles, hooks, formats, and offers, ranks every ad with a 100-point adaptation-leverage score, and writes a dated research brief (research/BRIEF-<date>.md) containing top competitors, their running ads, scored opportunities, and 3 to 5 concrete creative briefs ready to hand to the Hermes Ad Agent image and video generation skills. Use when the user asks to research competitors, spy on competitor ads, see what ads a brand or niche is running, pull or search the Meta Ad Library, find long-running competitor creative, build a swipe file, or prepare a competitor research brief before making new ads. Research only, it does not generate creatives or publish anything to Meta. Requires the Meta Ads MCP server; the Ad Library is not available through the Meta Ads CLI.
 ---
 
 # Competitor Ad Research
 
-You are running a research-only competitor workflow for the Hermes Ad Agent. Everything flows through Meta's official Ads MCP server. There are no local scripts, no Python, no Selenium, no browser scraping, no `.env` files, and no `META_ACCESS_TOKEN`. If you catch yourself reaching for curl or a script to hit the Graph API, stop: the only data source in this skill is the `ads_library_search` MCP tool.
+You are running a research-only competitor workflow for the Hermes Ad Agent. Ad Library research flows through Meta's official Ads MCP server. There are no local scripts, no Python, no Selenium, no browser scraping, and no token handling in this skill. If you catch yourself reaching for curl or a script to hit the Graph API, stop: the only data source for Ad Library research is the `ads_library_search` MCP tool. The Meta Ads CLI (Meta's official command-line tool for the Marketing API), the pack's other Meta backend, does not expose the Ad Library, and neither its system user token nor curl against the Graph API is a substitute (the Ad Library API needs its own identity verification and only covers a subset of ads), so do not try. If the CLI is the only Meta backend in this session, use the fallback section below.
 
 The output is one file: `research/BRIEF-<date>.md` at the workspace root (the repo clone directory recorded during setup), for example `research/BRIEF-2026-08-24.md`. It contains the competitor landscape, their running ads with ad archive links, a scored opportunity ranking, and 3 to 5 concrete creative briefs the user can hand directly to this suite's image ad and video ad skills.
 
@@ -13,9 +13,19 @@ Read `references/methodology.md` in this skill folder before your first run. It 
 
 ## Requirements
 
-- **Meta Ads MCP connected.** The official server (`https://mcp.facebook.com/ads`) must be configured and logged in. If `ads_library_search` is not in your available tool list, walk the user through connecting the server (see SETUP.md and docs/meta-mcp.md in this repo for the connection steps) and stop until it is connected.
+- **Meta Ads MCP connected.** The official server (`https://mcp.facebook.com/ads`) must be configured and logged in. If `ads_library_search` is not in your available tool list, check whether the install is on the CLI route: run `meta auth status` in the terminal. If it reports a token, tell the user plainly that Ad Library search needs the MCP route (SETUP.md Step 4, Route A; docs/meta-mcp.md has the connection steps for humans who want the full picture) and offer the fallback below instead of stopping cold. If neither backend responds, Meta is not connected yet: walk the user through SETUP.md Step 4 (either route) and stop until one is connected.
 - **An active ad account.** Meta only serves `ads_library_search` to users with at least one active ad account on the connected Business account. If the tool returns an access error, report that requirement plainly; do not retry in a loop.
 - **BRAND.md.** Read `BRAND.md` from the workspace root first. It carries the user's offer, audience, tone, markets, and usually a competitor list. If it is missing, offer to run the brand-setup skill before continuing. You can proceed without it if the user insists, but say clearly that adaptation-fit judgments will be weaker.
+
+## If only the Meta Ads CLI is connected (fallback)
+
+`ads_library_search` is the only Ad Library data source, and it lives on the Meta MCP. When the session has the Meta Ads CLI but no `ads_*` tools, say so once, then offer this reduced mode:
+
+1. **Work from what the user supplies.** Ad Library links (`https://www.facebook.com/ads/library/?id=<ad-library-id>`), screenshots, copied ad text, or competitor names plus a description of what they are running. Record each item exactly as given and note that the user supplied it.
+2. **Read the public Ad Library page if you can.** If this session has a browser or web-fetch tool, open the public Ad Library page for a competitor (the page-level view, or an individual ad's archive link) and record what it actually shows. Mark visuals as viewed only when you actually viewed them. The public page may require login or block fetching; if it does, say so and fall back to item 1.
+3. **Run the same analysis on whatever was gathered.** Apply the taxonomy, scoring, and brief format from `references/methodology.md` unchanged. In the run summary, state that the pull was manual and partial, and that the score's longevity component is unavailable (scored 0, tagged "partial data") unless running dates were captured.
+
+Never fabricate ads, dates, platforms, or copy to fill the gaps a manual pull leaves. Dedupe by Ad Library ID when you have one; if you do not, keep each supplied item as its own record and say the ID is unknown. Page resolution in this mode is by explicit ID or user confirmation only; the keyword-search route in Step 3 needs `ads_library_search`. The output file and brief format stay the same: `research/BRIEF-<date>.md`, with the coverage section carrying the manual-pull disclosure.
 
 ## Quick reference: ads_library_search
 
@@ -97,7 +107,7 @@ Present the brief to the user, restate the longevity disclaimer once, and ask wh
 
 ## Pitfalls
 
-- **Access error on the first call.** Usually means the connected Meta login has no active ad account, or the OAuth session lapsed. Explain, suggest re-running the Meta MCP login (see SETUP.md / docs/meta-mcp.md for the reconnect steps), stop.
+- **Access error on the first call.** Usually means the connected Meta login has no active ad account, or the OAuth session lapsed, or the install is on the CLI route and the tool is missing (see the fallback section). Explain, suggest re-running the Meta MCP login (see SETUP.md / docs/meta-mcp.md for the reconnect steps), and stop unless the user takes the fallback.
 - **The 50-result ceiling.** Big advertisers run hundreds of ads. Say openly that the pull is a sample, prioritize `ACTIVE` ads, and slice further with `search_terms` per product line if the user wants depth.
 - **Prolific lookalike pages.** Dropshippers clone brand names constantly. This is exactly why Step 3 refuses fuzzy matches.
 - **Snapshot URLs are not deliverables.** They can expire or require login. The durable public reference is the `facebook.com/ads/library/?id=` archive link; always include it.

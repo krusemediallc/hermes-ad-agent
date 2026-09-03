@@ -19,34 +19,53 @@ description: >-
 # Ad reporting automations
 
 You set up scheduled, unattended check-ins on the user's Meta ads. The jobs
-run in fresh agent sessions on the Hermes scheduler, pull data through the
-Meta Ads MCP, and deliver a message to the user. They observe and recommend.
-They never act.
+run in fresh agent sessions on the Hermes scheduler, pull data through
+whichever Meta backend is connected (the Meta Ads MCP tools, or the Meta
+Ads CLI, Meta's official command-line tool for the Marketing API), and
+deliver a message to the user. They observe and recommend. They never act.
 
 ## Non-negotiable rules for every job you create
 
 1. **Read-only, forever.** A scheduled job may call insights, entity-listing,
-   and diagnostic tools only. Its prompt must never instruct it to call
-   `ads_activate_entity`, `ads_update_entity`, any `ads_create_*` tool, or
-   any Arcads generation tool. Never let a monitoring job grow write
-   permissions over time.
+   and diagnostic reads only, on either backend. Its prompt must never
+   instruct it to call the MCP tools `ads_activate_entity`,
+   `ads_update_entity`, or any `ads_create_*`; never to run any
+   `meta ads ... update` (status or budget), `create`, or `delete` command
+   on the CLI; and never to call any Arcads generation tool. Never let a
+   monitoring job grow write permissions over time.
 2. **Alerts ping, humans act.** When a job finds a problem, it delivers the
    finding plus a recommended action and tells the user to reply in chat to
    have it done with their confirmation. No automatic pausing, no automatic
    budget changes, no "corrective" anything.
 3. **Never fabricate.** Job prompts must carry the rule that only numbers the
-   MCP tools returned get reported, and that a failed tool call is reported
-   as a failure, not papered over.
+   Meta tools (MCP or CLI) returned get reported, and that a failed tool
+   call or command is reported as a failure, not papered over.
 4. **Thresholds are the user's.** Every threshold in an alert job was
    confirmed by the user during setup (or came from BRAND.md and was shown to
    the user during setup). Do not invent trigger levels.
 
 ## Prerequisites
 
-- **Meta Ads MCP connected.** Check your live tool list for
+- **Meta backend connected.** Detect which one is live. If your live tool
+  list contains tools named `ads_*` (look for
   `ads_insights_performance_trend`, `ads_get_ad_entities`, and
-  `ads_get_errors`. Tool names differ between server versions; trust the
-  live list and adapt the job prompts to the tools that actually exist.
+  `ads_get_errors`), the Meta MCP is connected. Otherwise run
+  `meta auth status` in the terminal; if it reports a token, run
+  `meta ads adaccount list --output json`, and if that returns accounts the
+  Meta Ads CLI is configured. If neither works, stop and tell the user Meta
+  is not connected yet (SETUP.md Step 4 covers both routes). If both work,
+  prefer the MCP. The CLI reads the jobs use are `meta ads insights get`,
+  `meta ads campaign|adset|ad list`, and `meta ads <resource> get <ID>`,
+  always with `--output json`. Tool names differ between MCP server
+  versions and flags differ between CLI versions; trust the live tool list
+  and `--help` output over what is written here, and adapt the job prompts
+  to what actually exists.
+- **The job can find the backend on its own.** A scheduled job runs in a
+  fresh session with no memory of this conversation, so every job prompt
+  below carries the detection rule. On the CLI route the credentials live
+  in `.env` at the workspace root (`ACCESS_TOKEN`, `AD_ACCOUNT_ID`), and
+  the job must run `meta` from that directory so the CLI can read them.
+  Never copy the token into the prompt.
 - **The `meta-performance-loop` skill installed.** The daily digest attaches
   it so the scheduled session reports the same way an on-demand ask does.
 - **BRAND.md** at the workspace root (the repo clone directory recorded
@@ -68,6 +87,25 @@ They never act.
   schedule, in a fresh session, with the exact self-contained prompt below,
   and delivers its output to the agreed channel. If no scheduler capability
   exists at all, say so and stop; do not fake recurring behavior.
+
+## Backend reference
+
+The reads the jobs make, in both forms. Use whichever backend the detection
+rule found; on the CLI, pass `--output json` on every command. For humans
+who want the full picture, the repo's `docs/meta-mcp.md` and
+`docs/meta-cli.md` cover each backend end to end.
+
+| Read | Meta MCP tool | Meta Ads CLI command |
+|---|---|---|
+| Campaigns, ad sets, ads (status, budget) | `ads_get_ad_entities` | `meta ads campaign list --output json`, `meta ads adset list --output json`, `meta ads ad list --output json` (add `--status`, `--limit`, `--fields` as needed); one entity: `meta ads <resource> get <ID> --output json` |
+| Performance window (yesterday) | `ads_insights_performance_trend` | `meta ads insights get [--campaign-id/--adset-id/--ad-id <ID>] --date-preset yesterday --fields spend,impressions,clicks,ctr,cpc,conversions,cost_per_conversion,purchase_roas --output json`; swap the preset (`last_3d`, `last_7d`) or use `--since YYYY-MM-DD --until YYYY-MM-DD` for other windows, and add `--time-increment daily` for a daily series |
+| Today's spend so far | `ads_insights_performance_trend` | `meta ads insights get --date-preset today --fields spend,conversions,cost_per_conversion --output json` |
+| Anomalies | `ads_insights_anomaly_signal` | not available; compare `--date-preset yesterday` against a `--date-preset last_7d --time-increment daily` series yourself and label it as your own comparison |
+| Errors and rejections | `ads_get_errors` | `meta ads <resource> get <ID> --output json`, then read `effective_status` and `issues_info` |
+
+Per-ad ranking on the CLI: check `meta ads insights get --help` for an
+entity-level option; if there is none, list the ads with
+`meta ads ad list --output json` and call insights once per `--ad-id`.
 
 ## Setup flow
 
@@ -115,9 +153,11 @@ Collect and repeat back before creating anything:
 
 Create each enabled job with a clear name so the user can recognize it in
 the scheduler's job list. The prompts below are templates: replace
-everything in angle brackets with the confirmed values, and keep the safety
-lines verbatim. Each prompt must be self-contained because the job runs in a
-fresh session with no memory of this conversation.
+everything in angle brackets with the confirmed values (`<workspace root>`
+is the absolute path of the repo clone directory, where BRAND.md and, on
+the CLI route, `.env` live), and keep the safety lines verbatim. Each
+prompt must be self-contained because the job runs in a fresh session with
+no memory of this conversation, including which Meta backend to use.
 
 **(a) Daily digest**, schedule example `0 8 * * *` (adjusted for timezone),
 name `meta-daily-digest`, deliver to the confirmed channel. If your
@@ -130,18 +170,27 @@ otherwise the prompt below stands alone:
 You are running a scheduled READ-ONLY Meta ads report. Read BRAND.md at
 <path> for the ad account and conversion event (its "## Meta Assets"
 section), the CPA/ROAS target (its "## Performance Targets" section), and
-the daily spend cap (its "## Budget Guardrails" section). Using the
-meta-performance-loop skill and the Meta Ads MCP
-insights tools (check your live tool list; ads_insights_performance_trend is
-the primary tool), report on YESTERDAY (<user timezone>): total spend,
-results, CPA and/or ROAS versus the BRAND.md target, top and bottom ads by
-CPA with their numbers, and anything from ads_insights_anomaly_signal or
-ads_get_errors. End with 1 to 3 recommendations, each phrased as "reply to
-confirm and it will be done with your confirmation"; never execute any
+the daily spend cap (its "## Budget Guardrails" section). META BACKEND: if
+tools named ads_* exist in your tool list, use them; otherwise run the Meta
+Ads CLI from <workspace root> (it reads .env there) with --output json on
+every command. Using the meta-performance-loop skill, report on YESTERDAY
+(<user timezone>): total spend, results, and CPA and/or ROAS versus the
+BRAND.md target (MCP: ads_insights_performance_trend; CLI: meta ads
+insights get --date-preset yesterday --fields
+spend,impressions,clicks,ctr,cpc,conversions,cost_per_conversion,purchase_roas
+--output json); top and bottom ads by CPA with their numbers (CLI: meta ads
+ad list --output json, then insights once per --ad-id); anomalies (MCP:
+ads_insights_anomaly_signal; CLI: none, so compare yesterday against a
+--date-preset last_7d --time-increment daily series and label it your own
+comparison); and delivery errors (MCP: ads_get_errors; CLI: meta ads
+campaign|adset|ad get ENTITY_ID --output json, then read effective_status
+and issues_info). End with 1 to 3 recommendations, each phrased as "reply
+to confirm and it will be done with your confirmation"; never execute any
 change yourself. HARD RULES: read-only, never call ads_activate_entity,
-ads_update_entity, or any ads_create_* tool; report only numbers the MCP
-tools returned; if a tool fails, say so instead of guessing. If there was no
-spend and no delivery yesterday, send a single short line saying so.
+ads_update_entity, or any ads_create_* tool, and never run any meta ads ...
+update, create, or delete command; report only what the Meta tools
+returned; if a tool or command fails, say so instead of guessing. If there
+was no spend and no delivery yesterday, send a single short line saying so.
 ```
 
 **(b) Hourly in-flight check**, schedule `every 1h` (or `0 * * * *`), name
@@ -151,20 +200,30 @@ spend and no delivery yesterday, send a single short line saying so.
 You are running a scheduled READ-ONLY hourly check on in-flight Meta ads.
 Read BRAND.md at <path> for the ad account (its "## Meta Assets" section),
 the CPA target (its "## Performance Targets" section), and the daily spend
-cap (its "## Budget Guardrails" section).
-First call ads_get_ad_entities (check your live tool list): if NO campaigns,
-ad sets, or ads are ACTIVE, output exactly "[SILENT] no active ads" and
-stop. If ads are active, check today's spend pace and running CPA via
-ads_insights_performance_trend, anomalies via ads_insights_anomaly_signal,
-and delivery problems via ads_get_errors. Notable means: spend pace above
-<confirmed pace rule>, running CPA above <confirmed multiple> of target with
-meaningful spend, a new rejection or delivery error, or an anomaly signal.
-If NOTHING is notable, output exactly "[SILENT] all quiet" and nothing else.
-If something IS notable, send a short alert: what happened, the numbers the
-tools returned, and one recommended action the user can confirm in chat.
-HARD RULES: read-only, never call ads_activate_entity, ads_update_entity, or
-any ads_create_* tool; never take corrective action; report only what the
-MCP tools returned.
+cap (its "## Budget Guardrails" section). META BACKEND: if tools named
+ads_* exist in your tool list, use them; otherwise run the Meta Ads CLI
+from <workspace root> (it reads .env there) with --output json on every
+command. First list the entities (MCP: ads_get_ad_entities; CLI: meta ads
+campaign list, meta ads adset list, and meta ads ad list, each with
+--output json): if NO campaigns, ad sets, or ads are ACTIVE, output exactly
+"[SILENT] no active ads" and stop. If ads are active, check today's spend
+pace and running CPA (MCP: ads_insights_performance_trend; CLI: meta ads
+insights get --date-preset today --fields
+spend,conversions,cost_per_conversion --output json), anomalies (MCP:
+ads_insights_anomaly_signal; CLI: none; if you compare today's pace against
+a --date-preset last_7d --time-increment daily series, label it your own
+comparison), and delivery problems (MCP: ads_get_errors; CLI: meta ads
+campaign|adset|ad get ENTITY_ID --output json, then read effective_status
+and issues_info). Notable means: spend pace above <confirmed pace rule>,
+running CPA above <confirmed multiple> of target with meaningful spend, a
+new rejection or delivery error, or an anomaly signal. If NOTHING is
+notable, output exactly "[SILENT] all quiet" and nothing else. If something
+IS notable, send a short alert: what happened, the numbers the tools
+returned, and one recommended action the user can confirm in chat. HARD
+RULES: read-only, never call ads_activate_entity, ads_update_entity, or any
+ads_create_* tool, and never run any meta ads ... update, create, or delete
+command; never take corrective action; report only what the Meta tools
+returned.
 ```
 
 The `[SILENT]` prefix is a typical shape for an output-suppression marker
@@ -186,21 +245,30 @@ this into the hourly check instead; offer that), name `meta-threshold-alerts`:
 You are running a scheduled READ-ONLY Meta ads threshold watch. Read
 BRAND.md at <path> for the ad account (its "## Meta Assets" section) and
 targets (its "## Performance Targets" and "## Budget Guardrails"
-sections). Check, using your live
-Meta Ads MCP tool list: (1) SPEND SPIKE: today's spend so far via
-ads_insights_performance_trend against the rule <confirmed rule, e.g. "over
-$X by this hour" or "pacing above Nx the $cap/day cap">. (2) CPA BREACH:
-running CPA over the last <24/48>h against <multiple> x the target CPA of
-<target>, only when spend exceeds <floor amount>. (3) REJECTED ADS: any ad,
-ad set, or campaign whose status or effective status shows rejected,
-disapproved, or with issues, via ads_get_ad_entities. (4) ACCOUNT ERRORS:
-anything returned by ads_get_errors. If no rule triggers, output exactly
-"[SILENT] no alerts". For each triggered rule, send: which rule, the exact
-numbers or errors the tools returned, and one recommended action (for
-example "consider pausing ad <name>; reply to confirm and it will be done
-with your confirmation"). HARD RULES: read-only, never call
-ads_activate_entity, ads_update_entity, or any ads_create_* tool; never take
-corrective action yourself; report only what the MCP tools returned.
+sections). META BACKEND: if tools named ads_* exist in your tool list, use
+them; otherwise run the Meta Ads CLI from <workspace root> (it reads .env
+there) with --output json on every command. Check: (1) SPEND SPIKE: today's
+spend so far (MCP: ads_insights_performance_trend; CLI: meta ads insights
+get --date-preset today --fields spend,conversions,cost_per_conversion
+--output json) against the rule <confirmed rule, e.g. "over $X by this
+hour" or "pacing above Nx the $cap/day cap">. (2) CPA BREACH: running CPA
+over the last <24/48>h (same tools; CLI: --date-preset yesterday or
+last_3d, or --since YYYY-MM-DD --until YYYY-MM-DD to match the window)
+against <multiple> x the target CPA of <target>, only when spend exceeds
+<floor amount>. (3) REJECTED ADS: any ad, ad set, or campaign whose status
+or effective status shows rejected, disapproved, or with issues (MCP:
+ads_get_ad_entities; CLI: meta ads campaign|adset|ad list --output json,
+then get ENTITY_ID --output json and read effective_status and
+issues_info). (4) ACCOUNT ERRORS: anything returned by ads_get_errors (MCP
+only; on the CLI the issues_info from step 3 is the error source). If no
+rule triggers, output exactly "[SILENT] no alerts". For each triggered
+rule, send: which rule, the exact numbers or errors the tools returned, and
+one recommended action (for example "consider pausing ad <name>; reply to
+confirm and it will be done with your confirmation"). HARD RULES:
+read-only, never call ads_activate_entity, ads_update_entity, or any
+ads_create_* tool, and never run any meta ads ... update, create, or delete
+command; never take corrective action yourself; report only what the Meta
+tools returned.
 ```
 
 ### 4. Show the user what exists now
@@ -211,8 +279,9 @@ After creating the jobs:
    name, schedule (in the user's timezone), delivery channel, and what it
    does in one line.
 2. Run the daily digest once manually with your scheduler's run-now action
-   so the user sees a real example immediately and you verify the Meta tools
-   work inside a scheduled session.
+   so the user sees a real example immediately and you verify the Meta
+   backend works inside a scheduled session (on the CLI route this also
+   proves the job's shell can see `.env`).
 3. Tell the user how to manage everything themselves. Hermes builds
    typically expose chat commands (a `/cron`-style command with list, edit,
    pause, resume, and remove actions), terminal equivalents, and a
@@ -244,6 +313,8 @@ back to the user before saving it.
   noisy monitor gets muted by the user and then misses the real alert.
 - Do not duplicate jobs on re-setup; list first, then extend or replace.
 - Do not put credentials, tokens, or real performance numbers into job
-  prompts; the job reads BRAND.md and pulls fresh data at runtime.
+  prompts; the job reads BRAND.md and pulls fresh data at runtime, and on
+  the CLI route it reads the token from `.env` at the workspace root, never
+  from the prompt.
 - If a job's delivery channel is not connected, the message goes nowhere;
   verify the channel with the user and test with a manual run.

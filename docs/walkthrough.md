@@ -27,7 +27,7 @@ Say to Hermes (paste the repo link you got with this guide):
 
 > Set up the Hermes Ad Agent skill pack from this repo: https://github.com/krusemediallc/hermes-ad-agent. Read its SETUP.md and follow it step by step. Check in with me at each checkpoint.
 
-Hermes will clone the repo, install every skill, and then move on to connecting the two MCP servers (next two chapters are part of the same guided setup).
+Hermes will clone the repo, install every skill, and then move on to connecting Meta (one of two routes) and Arcads (next two chapters are part of the same guided setup).
 
 **Want to try it before using your real brand?** The repo ships with a demo mode: a sample BRAND.md and a set of parody demo products. Say:
 
@@ -41,9 +41,11 @@ You can run research, creatives, and copy against the demo brand, then run `/bra
 
 ---
 
-## Chapter 3: Connect the Meta Ads MCP
+## Chapter 3: Connect Meta (MCP or CLI)
 
-**Goal:** Hermes can see and manage your ad accounts through Meta's official Ads MCP server. No developer app, no tokens, just a Meta Business login.
+**Goal:** Hermes can see and manage your ad accounts. There are two routes and you only need one. Route A is Meta's official Ads MCP server: no developer app, no tokens, just a Meta Business login. Route B is the Meta Ads CLI (Meta's official command-line tool for the Marketing API), authenticated with a system user token, for Hermes builds where the MCP will not connect.
+
+### Route A: the Meta Ads MCP
 
 If the guided setup hasn't done it already, say:
 
@@ -54,6 +56,20 @@ Hermes adds `https://mcp.facebook.com/ads` to its MCP config and starts an OAuth
 **Success looks like:** Hermes lists your ad accounts by name. Verify with:
 
 > List the ad accounts you can see and tell me which pages are connected to the first one.
+
+### Route B: the Meta Ads CLI
+
+If the MCP will not connect on your Hermes build (or you would rather use a plain CLI), say:
+
+> The Meta MCP won't connect on my build. Set up the Meta Ads CLI instead and walk me through creating the system user token.
+
+Hermes installs the `meta-ads` package (it needs Python 3.12 or later), then tells you exactly where to click in Meta Business Suite to create a system user, assign it your ad account and Facebook Page, and generate a token with the scopes it lists (generating the token needs a Meta developer app of your own; creating one is a few clicks and Hermes points you to it). You paste the token into the in-browser terminal from Chapter 1, never into chat. It is saved to a gitignored `.env` at the workspace root, and then Hermes lists your ad accounts.
+
+**Success looks like:** Hermes lists your ad accounts by name. Verify with:
+
+> List the ad accounts and pages the Meta Ads CLI can see.
+
+One note on the two routes: competitor research (the Meta Ad Library) needs Route A; everything else in this guide works on both.
 
 ---
 
@@ -137,7 +153,7 @@ Say:
 
 > Launch these: create a new campaign with one ad set and the 3 ads we made (image ads plus the copy from earlier). [Your objective, audience, and daily budget here.] Create everything paused and show me previews before I turn anything on.
 
-Hermes uploads the creatives, builds the campaign, ad set, and ads through the Meta MCP, and hands you preview links. Everything sits **paused**. One requirement: the ads need a real destination URL. If you've been testing in demo mode, the demo BRAND.md's placeholder (example.com) landing page won't fly; the launcher checks for placeholder URLs and will ask you for a real one before it creates anything, because Meta rejects example.com links. When you've reviewed the previews and you're ready to spend:
+Hermes uploads the creatives, builds the campaign, ad set, and ads through Meta (MCP or CLI). On the MCP route it hands you preview links; on the CLI route there are no previews, so you review the paused ads in Ads Manager by name. Everything sits **paused**. One requirement: the ads need a real destination URL. If you've been testing in demo mode, the demo BRAND.md's placeholder (example.com) landing page won't fly; the launcher checks for placeholder URLs and will ask you for a real one before it creates anything, because Meta rejects example.com links. When you've reviewed the previews (or the paused ads in Ads Manager) and you're ready to spend:
 
 > The previews look good. Activate the campaign.
 
@@ -155,7 +171,7 @@ Say:
 
 > Set up my ad reporting automations. I want a daily performance summary every morning at 8, and alert me if anything looks off. Send it to this chat.
 
-Hermes uses its built-in scheduler to create the recurring jobs and delivers reports to whatever channel you're chatting in (Telegram, Discord, Slack, email, and more). The jobs are read-only: they pull insights and anomaly signals, they never touch your budgets or campaigns. The "anything looks off" thresholds aren't guessed, either: alerts compare your numbers against the Performance Targets (target CPA or target ROAS) you set in BRAND.md during brand-setup, so if the alerts feel too tight or too loose, update those targets.
+Hermes uses its built-in scheduler to create the recurring jobs and delivers reports to whatever channel you're chatting in (Telegram, Discord, Slack, email, and more). The jobs are read-only: they pull insights (and anomaly signals on the MCP route), they never touch your budgets or campaigns. The "anything looks off" thresholds aren't guessed, either: alerts compare your numbers against the Performance Targets (target CPA or target ROAS) you set in BRAND.md during brand-setup, so if the alerts feel too tight or too loose, update those targets.
 
 Try an on-demand pull too:
 
@@ -167,7 +183,7 @@ Try an on-demand pull too:
 
 ## That's the whole loop
 
-Brand in BRAND.md, creatives from Arcads, copy in your voice, launched paused through Meta's MCP, and reporting on a schedule. From here, everything is just talking to Hermes. Two links if you skipped ahead:
+Brand in BRAND.md, creatives from Arcads, copy in your voice, launched paused through Meta (MCP or CLI), and reporting on a schedule. From here, everything is just talking to Hermes. Two links if you skipped ahead:
 
 - Hostinger (host Hermes): https://www.hostg.xyz/SHJtI with code **mrpaidsocial**
 - Arcads (creative generation): https://arcads.ai/?via=hermes

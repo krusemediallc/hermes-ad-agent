@@ -43,7 +43,7 @@ mark every brand-dependent fact as unverified.
 Ask only for missing facts that materially change the copy. If a draft can
 proceed with placeholders, use explicit brackets such as `[verified result]`.
 Never turn an assumption into a claim, and never fabricate a performance number.
-Only report metrics that came from the user, BRAND.md, or an MCP tool result.
+Only report metrics that came from the user, BRAND.md, or a Meta tool result (MCP or CLI).
 
 ## Workflow
 

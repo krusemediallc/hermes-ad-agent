@@ -2,6 +2,8 @@
 
 This is the repo-level reference for **Meta's official Ads MCP server**, the backend for every Meta action in this pack: competitor research, campaign building, creative upload, launching, and performance reporting. It covers what the server is, how to connect it to a Hermes agent, what access it needs, the tool families, the paused-first discipline this pack enforces, and troubleshooting.
 
+This is one of two supported Meta backends. If the MCP will not connect on your Hermes build, the pack works the same way through the Meta Ads CLI (Meta's official command-line tool for the Marketing API); see [meta-cli.md](meta-cli.md) and SETUP.md Step 4, Route B. Skills detect which backend is live and use it.
+
 The skills themselves are self-contained and do not depend on this file; this doc exists for setup (see [SETUP.md](../SETUP.md), Step 4) and for humans who want the full picture.
 
 > **Tool names vary between server versions.** Every tool name below was observed on a real Meta Ads MCP session (August 2026). Meta ships new tools and renames things between versions. Always trust the live tool list in your current session over any list written here or in a skill.
