@@ -161,6 +161,43 @@ Pixel/signal family: `ads_pixel_event_*` and `ads_pixel_parameter_*` (create/rea
 
 ---
 
+## Read surface for exact settings
+
+The `account-audit` skill captures each account's real settings so `meta-ad-launcher` can mirror them when building net-new ads. The MCP is the partial read tier for that job (Tier C in [meta-rebuild-fields.md](meta-rebuild-fields.md), verified 3 September 2026 against the tool schemas, the live field catalog from `ads_get_field_context`, and live reads). It is strong on targeting and delivery settings and blind to attribution, frequency caps, bid constraints, and every creative spec. What follows is what it can and cannot return; trust your live session over this list.
+
+### `ads_get_ad_entities` attribute fields, by level
+
+Pass `fields` at the `campaign`, `adset`, or `ad` level.
+
+| Level | Fields the MCP returns |
+|---|---|
+| campaign | `objective`, `buying_type`, `bid_strategy`, `daily_budget`, `lifetime_budget`, `spend_cap`, `budget_remaining`, `special_ad_category_country`, `smart_promotion_type`, `pacing_type`, `start_time`, `stop_time`, `status`, `effective_status`, `ad_creation_package_config` |
+| adset | `targeting`, `promoted_object`, `optimization_goal`, `billing_event`, `bid_strategy`, `bid_amount`, `daily_budget`, `lifetime_budget`, `budget_remaining`, `destination_type`, `pacing_type`, `start_time`, `end_time`, `daily_min_spend_target`, `daily_spend_cap`, `learning_stage_info`, `delivery_sub_status`, `campaign_id` |
+| ad | `creative_id`, `conversion_domain`, `adset_id`, `campaign_id`, `bid_amount` |
+| all levels | `id`, `name`, `status`, `effective_status`, `delivery`, `created_time`, `updated_time`, `account_id` |
+
+### What it cannot return
+
+`attribution_spec` (only the windows, via `learning_stage_info.attribution_windows`), `frequency_control_specs`, `bid_constraints`, `is_dynamic_creative`, `adset_schedule`, the `dsa_beneficiary` / `dsa_payor` fields, campaign `special_ad_categories` (only the country list), `tracking_specs`, `adlabels`, and every creative spec: `object_story_spec`, `asset_feed_spec`, `degrees_of_freedom_spec` (the Advantage+ creative enhancement enrollment), and `url_tags`. On an MCP-only setup the audit lists these under "Data Gaps" and recommends the Route B system user token, which unlocks the full read through the CLI or a direct Graph call (Tiers A and B). Never guess a missing field.
+
+### `ads_get_creatives`
+
+Called with `creative_ids`, it returns the creative flattened rather than as the API stores it: `body`, `title`, `link_url`, `image_hash`, `video_id`, `call_to_action_type`, `child_attachments`, and the effective media ids (`effective_object_story_id`, `effective_instagram_media_id`) instead of `instagram_user_id`. There is no `object_story_spec`, `asset_feed_spec`, `degrees_of_freedom_spec`, or `url_tags` in the response.
+
+### Normalizing what comes back
+
+MCP reads arrive display-formatted in places: index-keyed objects where the API has arrays (`{"0": "US", "1": "CA"}`), currency strings for budgets and bids (`"$50.00 USD"` where every write takes minor units), bid strategy as a label (`Highest volume`, `Cost per result goal`, `Bid cap`, `ROAS goal`) instead of the enum, and attribution only as `learning_stage_info.attribution_windows`. Section 5 of [meta-rebuild-fields.md](meta-rebuild-fields.md) carries the exact transformations; apply them before a Tier C snapshot is stored or reused, and note them in the memory file. Tier A and B reads need none of this.
+
+### Write-side notes for mirroring
+
+- `ads_create_campaign`, `ads_create_ad_set`, and `ads_create_ad` accept `source_campaign_id`, `source_adset_id`, and `source_ad_id` (copy-from). That is the fastest exact copy on this route: copy from the reference, then override the name, the parent, and anything the brief changes.
+- `ads_create_ad_set` takes `targeting` as raw JSON (the full targeting object, with the read-only `effective_*` echoes stripped), plus `placement` / `placement_soft_opt_out` for placement controls.
+- `ads_create_creative` takes `degrees_of_freedom_spec` as a JSON string (shortcuts `advantage_plus_creative`, `advantage_plus_creative_features`), so enhancement enrollment can be mirrored exactly.
+- `ads_create_creative` has no `asset_feed_spec` and no `url_tags` parameter: it builds single-variant creatives only. To mirror a multi-variant reference, create several single-variant creatives, or use the CLI for that creative. Whether inline `creative` JSON on `ads_create_ad` passes `url_tags` through is UNVERIFIED.
+- Every create stays PAUSED and confirm-gated, and the launcher reads the new entity back and compares it field by field against the reference (section 7 of [meta-rebuild-fields.md](meta-rebuild-fields.md)).
+
+---
+
 ## The paused-first discipline
 
 Meta's write tools execute immediately with no confirmation screen. This pack compensates with four non-negotiable rules, baked into every skill that touches Meta:

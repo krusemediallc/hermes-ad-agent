@@ -42,6 +42,27 @@
 <!-- Pixels / datasets and the conversion events actually promoted by the ad
      sets. -->
 
+## Rebuild Specs
+
+<!-- Capture tier used: graph (Tier A, Route B token in the workspace .env),
+     cli (Tier B, meta ads <resource> get --fields), or mcp (Tier C). -->
+<!-- Snapshot file paths relative to the workspace root:
+     memory/accounts/act_<ACCOUNT_ID>/specs/campaigns.jsonl, adsets.jsonl,
+     ads.jsonl, creatives.jsonl, and index.json. -->
+<!-- Entity counts per snapshot file (campaigns, ad sets, ads, creatives),
+     and whether the ~200-ad cap trimmed the set. -->
+<!-- Normalization applied (Tier C only): index-keyed arrays converted,
+     currency strings paired with minor-unit integers, bid strategy labels
+     mapped to enums (any left UNVERIFIED), attribution windows recorded as
+     an observation. Write "none (raw API shapes)" on Tier A or B. -->
+<!-- Per-creative enhancement enrollment summary for the top creatives:
+     creative id, then each creative_features_spec key with OPT_IN, OPT_OUT,
+     or default (key absent). On Tier C write "not readable on this tier". -->
+<!-- Fields unavailable on this tier, named plainly (for example on mcp:
+     degrees_of_freedom_spec, asset_feed_spec, attribution_spec,
+     frequency_control_specs, tracking_specs, special_ad_categories), and
+     the note that adding the Route B token upgrades the audit. -->
+
 ## Targeting Playbook
 
 <!-- Geos, age ranges, and gender settings in use, and which ad sets use

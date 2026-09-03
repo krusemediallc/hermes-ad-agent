@@ -3,7 +3,10 @@ name: account-audit
 description: >-
   Read-only 90-day deep dive of a connected Meta ad account that writes a
   durable memory file the whole pack reuses: account structure (campaigns,
-  ad sets, ads, budgets, bid strategies), settings and pixels, targeting
+  ad sets, ads, budgets, bid strategies), exact settings capture (raw
+  targeting objects, effective placements, attribution, tracking, and
+  creative specs including Advantage+ enhancement enrollment) written as
+  rebuild specs the launcher can mirror, settings and pixels, targeting
   patterns, the creative and copy actually running (verbatim), top and
   bottom performers over the last 90 days, and breakdown analysis (age,
   gender, placement, platform, geo), distilled into learnings the creative
@@ -48,7 +51,9 @@ calls from the Backend reference below.
    creative, budget, bid, audience, or pixel, on either backend. It makes
    list, get, and insights reads only: no MCP `ads_create_*`,
    `ads_update_entity`, or `ads_activate_entity` calls, and no
-   `meta ads ... create`, `update`, or `delete` commands on the CLI. If
+   `meta ads ... create`, `update`, or `delete` commands on the CLI. When
+   the rebuild-specs step reads the Graph API directly (Tier A), it issues
+   GET requests only; never a POST or DELETE. If
    the user asks for a change mid-audit, park the request and hand it to
    the acting skill afterward (`meta-ad-launcher` for launches and status
    changes, the Arcads creative skills for new assets).
@@ -74,7 +79,11 @@ calls from the Backend reference below.
    and verbatim copy live only in the memory file, never in committed
    files. Never paste an access token, or any other secret, into the
    memory file or anywhere else; the MCP handles its own auth and the CLI
-   token stays in the gitignored `.env`.
+   token stays in the gitignored `.env`. The Route B token used for Tier A
+   reads is read from the workspace-root `.env` inside the command
+   (`source .env`, then `$ACCESS_TOKEN`) and must never be echoed, logged,
+   or pasted into chat, memory files, snapshot files, or job prompts. The
+   `specs/` snapshot files sit under `memory/` and are user data too.
 7. **No Meta account, no audit.** In demo mode, or when no backend is
    connected, skip with a note explaining why and what to do next. Never
    fabricate an audit.
@@ -111,6 +120,19 @@ calls from the Backend reference below.
   `${HERMES_SKILL_DIR}/references/memory-template.md`. Read it before
   writing; other skills parse the memory file by its exact H2 heading
   names.
+- **The rebuild field reference.**
+  `${HERMES_SKILL_DIR}/references/rebuild-fields.md` holds the three read
+  tiers, the snapshot layout, the exact per-entity field lists, the
+  targeting keys and read-only echoes, the creative enhancement feature
+  list, the capability matrix, and the MCP normalization rules. Read it
+  before the rebuild-specs step and request exactly the fields it lists.
+- **Route B token (optional, upgrades the audit).** If the workspace-root
+  `.env` contains `ACCESS_TOKEN` (SETUP.md Step 4, Route B), the
+  rebuild-specs step can read the Graph API directly (Tier A), which is the
+  only way to read creative enhancement enrollment, ad set attribution, and
+  frequency settings. Check for it with a test that does not print the
+  value (for example `grep -q '^ACCESS_TOKEN=' .env`). Without it, the
+  step runs on the CLI (Tier B) or the MCP (Tier C) and records the gaps.
 - **BRAND.md is optional here.** During onboarding this skill runs before
   brand-setup, so BRAND.md usually does not exist yet; that is fine. When
   it does exist, read "## Performance Targets" for the goal metric and
@@ -143,6 +165,24 @@ docs/meta-mcp.md and docs/meta-cli.md cover each backend.
 | Pixels and conversion events | `ads_get_datasets` / `ads_get_dataset_details` (when present in the live list) | not available as a listing; read the pixel and event each ad set promotes from `meta ads adset get <ID> --output json` |
 | Account activity logs | `ads_account_get_activity_logs` | not available; record in Data Gaps |
 | Delivery / rejection errors | `ads_get_errors` | `meta ads <resource> get <ID> --output json`, read `effective_status` and `issues_info` |
+| Rebuild specs: campaigns (raw fields) | `ads_get_ad_entities` at the `campaign` level with `fields` set to the campaign attributes the MCP supports (Tier C, partial: no `special_ad_categories`) | `meta ads campaign get <ID> --fields <campaign field list from references/rebuild-fields.md> --output json` (Tier B) |
+| Rebuild specs: ad sets (raw `targeting`, `promoted_object`, delivery) | `ads_get_ad_entities` at the `adset` level with `fields` set to the ad set attributes the MCP supports (Tier C, partial: no `attribution_spec`, `frequency_control_specs`, `bid_constraints`, `adset_schedule`, `is_dynamic_creative`, `dsa_*`) | `meta ads adset get <ID> --fields <ad set field list from references/rebuild-fields.md> --output json` (Tier B) |
+| Rebuild specs: ads (creative link, `tracking_specs`, `conversion_domain`) | `ads_get_ad_entities` at the `ad` level with `fields` set to the ad attributes the MCP supports (Tier C, partial: `creative_id` and `conversion_domain` only; no `tracking_specs` or `adlabels`) | `meta ads ad get <ID> --fields <ad field list from references/rebuild-fields.md> --output json` (Tier B) |
+| Rebuild specs: creatives (`object_story_spec`, `asset_feed_spec`, `degrees_of_freedom_spec`, `url_tags`) | `ads_get_creatives` with `creative_ids` (Tier C, partial: flattened copy fields only; no enhancement enrollment or multi-variant spec) | `meta ads creative get <ID> --output json` (Tier B; whether it returns `degrees_of_freedom_spec` and `asset_feed_spec` is UNVERIFIED, so prefer Tier A for creatives) |
+
+**Tier A (Graph API direct read)** applies on either backend when the
+workspace-root `.env` holds the Route B `ACCESS_TOKEN`, and is the
+highest-fidelity read for every entity above. Template, run from the
+workspace root, GET only:
+
+```
+source .env
+curl -s "https://graph.facebook.com/v25.0/<ENTITY_ID>?fields=<field list from references/rebuild-fields.md>&access_token=$ACCESS_TOKEN"
+```
+
+Entity IDs come from the list calls in the table; Tier A reads each one by
+ID. The token is read from `.env` inside the command and must never be
+echoed, logged, or pasted into chat, memory files, or job prompts.
 
 ## Workflow
 
@@ -180,7 +220,97 @@ campaign, ad set, and ad names. Write "## Structure Map",
 "## Settings Inventory", and "## Targeting Playbook" as you go, each
 section appended when its data is complete.
 
-### 4. Inventory the creative and copy
+"## Settings Inventory" records, beyond the grouped optimization goals and
+billing events:
+
+- **Effective placements** per ad set: the `effective_publisher_platforms`,
+  `effective_facebook_positions`, `effective_instagram_positions`,
+  `effective_messenger_positions`, `effective_audience_network_positions`,
+  `effective_threads_positions`, and `effective_device_platforms` echoes
+  the read returns, which show where "Advantage+ placements" actually
+  resolved to. Record them; they are read-only and never written back.
+- **Attribution windows** per ad set: `attribution_spec` on Tier A or B;
+  on Tier C only `learning_stage_info.attribution_windows` (for example
+  `["7d_click", "1d_view"]`), labeled as an observation.
+- **Enhancement enrollment** per top creative: one line per feature key in
+  `degrees_of_freedom_spec.creative_features_spec` with its
+  `enroll_status` (`OPT_IN` or `OPT_OUT`), and `default` for features the
+  read did not return (a missing key is a platform default, never an
+  opt-out). On Tier C this summary cannot be produced; write "not readable
+  on this tier" and point to Data Gaps.
+
+### 4. Capture rebuild specs
+
+This step turns the structure map into exact, reusable specs: the raw API
+objects behind every campaign, ad set, ad, and creative in scope, stored
+next to the memory file so `meta-ad-launcher` can mirror an existing
+entity field for field. Read `references/rebuild-fields.md` first; it is
+the only source for field names, tiers, and normalization rules here. Do
+not add fields it does not list.
+
+1. **Choose the read tier**, in this order, and say once which one you
+   are using:
+   - **Tier A (Graph direct read)** if the workspace-root `.env` contains
+     the Route B `ACCESS_TOKEN` (test its presence without printing it).
+     Use the Tier A template from the Backend reference, GET only. Tier A
+     is used even when the MCP is the primary backend for everything else;
+     it is the only tier that reads creative enhancement enrollment.
+   - **Tier B (CLI `get --fields`)** otherwise, if the Meta Ads CLI is live
+     (`meta auth status` reports a token). Creatives via
+     `meta ads creative get <ID> --output json`; if that response lacks
+     `degrees_of_freedom_spec` or `asset_feed_spec`, record the gap (their
+     presence on the CLI is UNVERIFIED).
+   - **Tier C (MCP)** otherwise: `ads_get_ad_entities` with `fields` at
+     the `campaign`, `adset`, and `ad` levels, and `ads_get_creatives`
+     with `creative_ids`.
+2. **Pull the exact field lists** from `references/rebuild-fields.md`
+   section 3 for campaigns, ad sets, ads, and creatives (on Tier C, the
+   subset the capability matrix in section 4 marks as readable). Scope:
+   all ACTIVE entities first, then the top 90-day spenders among the rest,
+   under the same roughly 200-ad cap as the structure map. Read each ad's
+   `creative.id` (or `creative_id` on the MCP) and capture that creative
+   separately by id.
+3. **Write the snapshot files** under the workspace root, one JSON object
+   per line, fields exactly as returned, plus `_captured_via` (`graph`,
+   `cli`, or `mcp`) and `_captured_at` (ISO date):
+   - `memory/accounts/act_<ACCOUNT_ID>/specs/campaigns.jsonl`
+   - `memory/accounts/act_<ACCOUNT_ID>/specs/adsets.jsonl`
+   - `memory/accounts/act_<ACCOUNT_ID>/specs/ads.jsonl`
+   - `memory/accounts/act_<ACCOUNT_ID>/specs/creatives.jsonl`
+   Write incrementally, one line as each entity's read completes. On a
+   refresh, replace the files rather than appending duplicates.
+4. **Build `specs/index.json`**: a map from every captured id to its
+   name, entity type, parent ids (`campaign_id`, `adset_id`), status,
+   `effective_status`, and 90-day spend (from step 6 once pulled; write
+   the index after the performance pull, or write it now and update the
+   spend values then).
+5. **Normalize Tier C reads** per `references/rebuild-fields.md` section
+   5 before storing: index-keyed objects back to arrays, currency strings
+   kept alongside their integer minor-unit values, bid strategy labels
+   mapped to enums (unknown labels kept and marked UNVERIFIED), and
+   `learning_stage_info.attribution_windows` recorded as an observation.
+   Note in the memory file which normalizations were applied. Tier A and
+   B snapshots are stored as returned.
+6. **Record per-tier gaps** in "## Data Gaps" and in "## Rebuild Specs":
+   - Tier A: none expected; name any field the API omitted.
+   - Tier B: creative `degrees_of_freedom_spec` and `asset_feed_spec` if
+     the CLI did not return them.
+   - Tier C (MCP-only setups): creative enhancement enrollment
+     (`degrees_of_freedom_spec`), `asset_feed_spec`, `object_story_spec`
+     as a raw object, `url_tags`, ad set `attribution_spec`,
+     `frequency_control_specs`, `bid_constraints`, `adset_schedule`,
+     `is_dynamic_creative`, `dsa_beneficiary`, `dsa_payor`, ad
+     `tracking_specs`, and campaign `special_ad_categories` cannot be
+     read. State plainly that adding the Route B token (SETUP.md Step 4,
+     Route B) upgrades the audit to full fidelity, and never guess a
+     missing field.
+
+Write "## Rebuild Specs" in the memory file: tier used, snapshot paths,
+entity counts per file, normalizations applied, the per-creative
+enhancement enrollment summary for the top creatives, and the fields
+unavailable on this tier.
+
+### 5. Inventory the creative and copy
 
 Pull the creatives behind the ads in scope (`ads_get_creatives` /
 `ads_get_creative_ads` on the MCP, plus `ads_get_ad_images` and
@@ -190,7 +320,7 @@ video, carousel, dynamic), the hooks and angles in use, and for the
 running ads the primary texts, headlines, descriptions, CTAs, and
 destination URLs, verbatim. Write "## Creative and Copy Inventory".
 
-### 5. Pull 90 days of performance
+### 6. Pull 90 days of performance
 
 Use the last 90 days (`--date-preset last_90d` on the CLI; the equivalent
 window parameters on the MCP). Pull:
@@ -199,7 +329,7 @@ window parameters on the MCP). Pull:
   CPM, reach, frequency, conversions, cost per conversion, purchase ROAS).
 - Per-campaign totals.
 - Per-ad rows for the top spenders, ranked by spend and by the goal
-  metric (step 6). On the CLI, if there is no entity-level option in
+  metric (step 7). On the CLI, if there is no entity-level option in
   `meta ads insights get --help`, call insights once per `--ad-id` for the
   capped ad list only.
 - Breakdowns at account level, and for the top campaigns where volume
@@ -213,9 +343,10 @@ their winning copy verbatim and a short note on what the winners share),
 "## Underperformers and Fatigue" (high-spend ads far off the account's
 typical efficiency, high-frequency flags; numbers only from the backend,
 never invented), and "## Breakdown Analysis" (where results over- and
-under-index) as each pull completes.
+under-index) as each pull completes. Fill the 90-day spend values in
+`specs/index.json` from the per-entity rows now.
 
-### 6. Determine the goal metric
+### 7. Determine the goal metric
 
 The ranking metric for winners and losers, chosen honestly:
 
@@ -230,7 +361,7 @@ Either way, state in the file which rule applied. A goal metric inferred
 from the dominant objective is labeled as inferred, not user-confirmed,
 and brand-setup should confirm it later.
 
-### 7. Distill the learnings
+### 8. Distill the learnings
 
 Write "## Learnings for New Ads": a short do/don't list grounded in the
 sections above (angles and formats that won, placements or demographics
@@ -238,18 +369,21 @@ that over-index, targeting patterns the account relies on, copy patterns
 of the winners, what fatigued). Every line must trace back to data already
 in the file; this section is the one the creative skills act on, so keep
 it concrete. Finish the file with "## Data Gaps" (everything this backend
-could not provide, plus any caps applied) and a dated "## Changelog"
-entry, and complete "## Audit Metadata" and the spend and count figures in
+could not provide, the rebuild-spec fields the chosen tier could not read,
+plus any caps applied) and a dated "## Changelog" entry, and complete
+"## Audit Metadata" and the spend and count figures in
 "## Account Snapshot".
 
-### 8. Read the summary back
+### 9. Read the summary back
 
 Give the user a short plain-language summary: account, window, backend,
 90-day spend, what is running, the top 2 to 3 performers with their
-numbers, the biggest learnings, and the file path where the full memory
-now lives. Do not paste the whole file into chat.
+numbers, the biggest learnings, the rebuild-spec tier used (and, on Tier
+C, that the Route B token would upgrade it), and the file path where the
+full memory now lives. Do not paste the whole file or the snapshot files
+into chat.
 
-### 9. Offer a refresh
+### 10. Offer a refresh
 
 One line: the `ad-reporting-automations` skill can schedule a read-only
 refresh of this audit on a cadence (monthly is a sensible default) if the
@@ -273,7 +407,10 @@ rather than creating a second file.
   fatigued.
 - **meta-ad-launcher** reads "## Structure Map" and
   "## Settings Inventory" to match the account's existing conventions
-  (naming, CBO versus ABO, placements) when building new campaigns.
+  (naming, CBO versus ABO, placements) when building new campaigns, and
+  reads "## Rebuild Specs" plus the `specs/*.jsonl` and `specs/index.json`
+  snapshots to mirror a reference entity exactly (targeting, attribution,
+  tracking, and creative enhancement enrollment).
 - Skills treat the memory file as a hint from a past session and still
   verify live state at runtime; an audit is a snapshot, not a feed.
 
@@ -293,3 +430,9 @@ rather than creating a second file.
 - On the CLI, a section that depends on an MCP-only tool (previews, media
   inventory, custom audience names, activity logs) is recorded as a data
   gap, not silently skipped.
+- Do not treat a missing key in a snapshot as a setting: absent placement
+  keys mean Advantage+ placements, an absent `degrees_of_freedom_spec`
+  means platform defaults. Record observed defaults, never opt-outs.
+- Do not print, echo, or log the Route B token while checking for it or
+  using it in a Tier A command, and never issue anything but GET on that
+  tier.

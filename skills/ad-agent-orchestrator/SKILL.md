@@ -210,6 +210,15 @@ brief. Before it creates anything, present the full launch plan in one block:
 - daily budget per ad set, explicitly compared to the BRAND.md spend cap
 - destination URLs and CTA
 
+When an account memory exists (`memory/accounts/act_<ACCOUNT_ID>.md` with
+its `specs/` snapshots), `meta-ad-launcher` defaults to mirroring the
+best-matching reference structure from it: exact targeting, placements,
+bidding, attribution, tracking, and creative enhancement settings, with the
+brief's changes layered on top and every difference from the reference
+shown in the plan above. After creating, it reads each new entity back and
+verifies the copy field by field, reporting any delta rather than accepting
+it silently.
+
 **Gate:** the user approves this exact plan. Then the launcher creates
 everything with `status: PAUSED` at every level, campaign, ad set, and ad.
 It must never create anything ACTIVE, and you must never call

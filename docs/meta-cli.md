@@ -4,7 +4,7 @@ This is the repo-level reference for the **Meta Ads CLI** (Meta's official comma
 
 The skills themselves are self-contained and do not depend on this file; this doc exists for setup (see [SETUP.md](../SETUP.md), Step 4, Route B) and for humans who want the full picture.
 
-> **Flags vary between CLI versions.** Everything below was checked against Meta's official documentation and the PyPI listing on 2 September 2026 (package `meta-ads` 1.1.0). Always trust `meta ads <resource> <action> --help` in your installed version over any flag written here.
+> **Flags vary between CLI versions.** Everything below was checked against Meta's official documentation and the PyPI listing on 2 September 2026 (package `meta-ads` 1.1.0), and on 3 September 2026 the flag strings were extracted directly from the compiled 1.1.0 binary, which surfaced flags the public docs omit (see "Flags verified from the 1.1.0 binary" below and [meta-rebuild-fields.md](meta-rebuild-fields.md)). Always trust `meta ads <resource> <action> --help` in your installed version over any flag written here.
 
 ---
 
@@ -139,10 +139,10 @@ Flags are as documented for 1.1.0; confirm with `--help` before relying on one.
 | Command | Purpose | Notes |
 |---|---|---|
 | `meta ads campaign create` | Create a campaign. **Always `--status PAUSED`.** | `--name`, `--objective` required (`OUTCOME_SALES`, `OUTCOME_LEADS`, `OUTCOME_TRAFFIC`, ...); optional `--daily-budget`, `--lifetime-budget`, `--special-ad-categories` |
-| `meta ads adset create <CAMPAIGN_ID>` | Create an ad set. **Always `--status PAUSED`.** | `--name`, `--optimization-goal`, `--billing-event` required; `--daily-budget`, `--targeting-countries US`, `--age-min`, `--age-max`, `--genders`, a targeting JSON option, `--pixel-id`, `--custom-event-type` and other promoted-object options, `--start-time`, `--end-time` |
-| `meta ads ad create <AD_SET_ID>` | Create an ad from a creative. **Always `--status PAUSED`.** | `--name`, `--creative-id` required |
-| `meta ads campaign\|adset\|ad list` | Read structure and status | `--status` filter, `--limit` (default 10), `--fields` |
-| `meta ads campaign\|adset\|ad get <ID>` | Read one entity | Returns the entity fields plus `effective_status` and `issues_info` |
+| `meta ads adset create <CAMPAIGN_ID>` | Create an ad set. **Always `--status PAUSED`.** | `--name`, `--optimization-goal`, `--billing-event` required; `--daily-budget`, `--lifetime-budget`, `--bid-amount` (minor units; documented in the official command reference); simple targeting via `--targeting-countries US`, `--age-min`, `--age-max`, `--genders`, or the full object via `--targeting '<json>'` / `--targeting @file.json` (replaces `--targeting-countries`); promoted object via `--pixel-id` + `--custom-event-type` or `--promoted-object` (JSON or `@file`); `--attribution-spec`; `--start-time`, `--end-time`. Full verified list below |
+| `meta ads ad create <AD_SET_ID>` | Create an ad from a creative. **Always `--status PAUSED`.** | `--name`, `--creative-id` required; `--tracking-specs`, `--conversion-domain` optional |
+| `meta ads campaign\|adset\|ad list` | Read structure and status | `--status` filter, `--limit` (default 10), `--fields` with Graph API field names |
+| `meta ads campaign\|adset\|ad get <ID>` | Read one entity | Returns the entity fields plus `effective_status` and `issues_info`; `--fields` with Graph API field names returns the exact stored objects (`targeting`, `promoted_object`, `attribution_spec`, `tracking_specs`, and so on). Verified on the 1.1.0 binary; see below |
 
 **Budgets are in minor currency units.** `--daily-budget 5000` is 50.00 in the account currency; "$20 a day" is `--daily-budget 2000`. Always convert, and restate the human amount to the user.
 
@@ -176,7 +176,33 @@ There is no separate upload step: the MCP's `ads_creative_upload_image` / `ads_c
 - **Breakdown:** `--breakdown age|gender|country|publisher_platform|device_platform|platform_position|impression_device` (repeatable).
 - **Ordering and size:** `--sort spend_descending` and similar; `--limit` (default 50).
 
-For a per-ad ranking, check `meta ads insights get --help` for an entity-level option in your version. If there is none, list the ads (`meta ads ad list --output json`) and call insights once per `--ad-id`.
+For a per-ad ranking, the 1.1.0 binary carries a `level` option (see the verified list below); `meta ads insights get --help` prints its exact spelling and accepted values in your version. If your version has none, list the ads (`meta ads ad list --output json`) and call insights once per `--ad-id`.
+
+### Flags verified from the 1.1.0 binary (September 2026)
+
+The public Ads CLI docs list a subset of what the 1.1.0 binary accepts. On 3 September 2026 the flag strings were read directly from the compiled `meta-ads` 1.1.0 binary (the full verification is in [meta-rebuild-fields.md](meta-rebuild-fields.md)). These flags exist in 1.1.0 and are what the exact-rebuild path in `account-audit` and `meta-ad-launcher` relies on. The "trust `--help`" caveat still applies: a later version can rename or drop any of them, so confirm with `meta ads <resource> <action> --help` before relying on one, and never invent a flag that is not in this list or in your `--help` output.
+
+**Reads.** `campaign`, `adset`, and `ad` `get` and `list` accept `--fields` with Graph API field names, passed straight through to the Marketing API. The binary's own help examples:
+
+```bash
+meta ads adset get 123456 --fields name,targeting,promoted_object,bid_strategy
+meta ads ad get 123456 --fields name,effective_status,creative,tracking_specs
+meta ads campaign get 123456 --fields name,objective,spend_cap,budget_remaining
+```
+
+Add `--output json` when an agent runs them. The per-entity field lists to request are in [meta-rebuild-fields.md](meta-rebuild-fields.md), section 3.
+
+**`adset create`:** `--targeting` (raw targeting JSON, or `@file.json`; replaces `--targeting-countries`), `--promoted-object` (JSON or `@file`), `--attribution-spec`, `--advantage-audience`, `--dsa-beneficiary`, `--dsa-payor`, `--incremental-attribution`, `--conversion-domain`.
+
+**`campaign create`:** `--bid-strategy`, `--pacing-type`, `--special-ad-categories`, `--adset-budget-sharing`.
+
+**`ad create`:** `--tracking-specs`, `--conversion-domain`.
+
+**`creative create`:** `--object-story-spec` (JSON or `@file`), `--asset-feed-spec` (JSON or `@file`), `--degrees-of-freedom-spec` (JSON or `@dof.json`; this is where Advantage+ creative enhancements are opted in or out), `--url-tags`, `--contextual-multi-ads`, `--authorization-category`, `--applink-treatment`, `--dynamic-creative`, `--object-story-id`, `--source-instagram-media-id`, `--instagram-permalink-url`, `--product-set-id`, plus the DCO plurals listed in the creatives table above (`--images`, `--videos`, `--titles`, `--bodies`, `--descriptions`, `--call-to-actions`).
+
+**`insights get`:** level, breakdowns, date_preset / since / until, time_increment, sort, limit, fields (hyphenated on the command line; `--help` prints the exact spelling and accepted values).
+
+Still UNVERIFIED on 1.1.0: ad set flags for `frequency_control_specs`, `bid_constraints`, `adset_schedule`, and `is_dynamic_creative`; the `source_campaign_id` / `source_adset_id` / `source_ad_id` copy-from fields on any `create`; and whether `meta ads creative get` returns `degrees_of_freedom_spec` and `asset_feed_spec`. `meta ads <resource> create --help` is authoritative. When a native flag is missing, the Tier A Graph read below covers the read side.
 
 ### Diagnostics
 
@@ -208,11 +234,11 @@ The canonical mapping between the Meta MCP tools in [meta-mcp.md](meta-mcp.md) a
 | Show configured account | (n/a) | `meta ads adaccount current` |
 | List Pages | `ads_get_ad_account_pages` / `ads_get_user_pages` | `meta ads page list --output json` |
 | List Instagram accounts | `ads_get_ig_accounts` | not available; ask the user for the Instagram account ID (Business Settings → Instagram accounts) or omit `--instagram-actor-id` |
-| Read campaigns / ad sets / ads | `ads_get_ad_entities` | `meta ads campaign list --output json`, `meta ads adset list --output json`, `meta ads ad list --output json` (add `--status`, `--limit`, `--fields` as needed); single entity: `meta ads <resource> get <ID> --output json` |
-| Create campaign (PAUSED) | `ads_create_campaign` | `meta ads campaign create --name "<name>" --objective <OBJECTIVE> [--daily-budget <minor units>] [--special-ad-categories ...] --status PAUSED --output json` |
-| Create ad set (PAUSED) | `ads_create_ad_set` | `meta ads adset create <CAMPAIGN_ID> --name "<name>" --optimization-goal <GOAL> --billing-event IMPRESSIONS --daily-budget <minor units> --targeting-countries <CC> [--age-min --age-max --genders] [--pixel-id <ID> --custom-event-type <EVENT>] --status PAUSED --output json` |
+| Read campaigns / ad sets / ads | `ads_get_ad_entities` | `meta ads campaign list --output json`, `meta ads adset list --output json`, `meta ads ad list --output json` (add `--status`, `--limit`, `--fields` as needed); single entity: `meta ads <resource> get <ID> --output json`; exact settings: `meta ads <resource> get <ID> --fields <Graph field names> --output json` |
+| Create campaign (PAUSED) | `ads_create_campaign` | `meta ads campaign create --name "<name>" --objective <OBJECTIVE> [--daily-budget <minor units>] [--bid-strategy <STRATEGY>] [--pacing-type ...] [--special-ad-categories ...] [--adset-budget-sharing ...] --status PAUSED --output json` |
+| Create ad set (PAUSED) | `ads_create_ad_set` | Simple: `meta ads adset create <CAMPAIGN_ID> --name "<name>" --optimization-goal <GOAL> --billing-event IMPRESSIONS --daily-budget <minor units> --targeting-countries <CC> [--age-min --age-max --genders] [--pixel-id <ID> --custom-event-type <EVENT>] --status PAUSED --output json`. Exact mirror: the same command with `--targeting @targeting.json` (the full targeting object; replaces `--targeting-countries`), `--promoted-object @promoted.json`, `--attribution-spec '<json>'`, and where the reference sets them `--advantage-audience`, `--dsa-beneficiary`, `--dsa-payor`, `--conversion-domain` |
 | Upload image / video | `ads_creative_upload_image` / `ads_creative_upload_video` | folded into `meta ads creative create --image ./file` or `--video ./file` (auto-upload) |
-| Create creative | `ads_create_creative` | `meta ads creative create --name "<name>" --page-id <PAGE_ID> [--instagram-actor-id <IG_ID>] --image ./file --bodies "..." "..." --titles "..." "..." --descriptions "..." --link-url <URL> --call-to-action <CTA> --output json` (singular `--body/--title/--description` for one variant) |
+| Create creative | `ads_create_creative` | Simple: `meta ads creative create --name "<name>" --page-id <PAGE_ID> [--instagram-actor-id <IG_ID>] --image ./file --bodies "..." "..." --titles "..." "..." --descriptions "..." --link-url <URL> --call-to-action <CTA> --output json` (singular `--body/--title/--description` for one variant). Exact mirror: add `--degrees-of-freedom-spec @dof.json` (the reference's enhancement enrollment, verbatim), `--url-tags "<tags>"`, `--contextual-multi-ads ...`, and for multi-variant references `--asset-feed-spec @afs.json` or a full `--object-story-spec @oss.json` in place of the shortcut flags |
 | Create ad (PAUSED) | `ads_create_ad` | `meta ads ad create <AD_SET_ID> --name "<name>" --creative-id <CREATIVE_ID> --status PAUSED --output json` |
 | Preview an ad | `ads_get_ad_preview` | not available; the user reviews the paused ad in Ads Manager by name or ID |
 | Activate | `ads_activate_entity` | `meta ads <campaign\|adset\|ad> update <ID> --status ACTIVE` (spend-gated) |
@@ -225,6 +251,23 @@ The canonical mapping between the Meta MCP tools in [meta-mcp.md](meta-mcp.md) a
 | Ad Library search | `ads_library_search` | not available |
 
 Also MCP-only: advertiser context, industry and auction benchmarks, opportunity score, activity logs, custom audiences, experiments, and boosting Instagram posts. Datasets (`meta ads dataset ...`) and catalogs (`meta ads catalog ...`) exist in the CLI but this pack does not use them.
+
+---
+
+## Direct Graph API read (Tier A)
+
+The CLI's `--fields` returns campaigns, ad sets, and ads completely, but whether `meta ads creative get` returns `degrees_of_freedom_spec` and `asset_feed_spec` is UNVERIFIED on 1.1.0. For creatives, and for any field with no native flag, the same Route B system user token can read the Graph API directly. [meta-rebuild-fields.md](meta-rebuild-fields.md) calls this Tier A; it is the guaranteed path for creative enhancement settings, and the `account-audit` skill uses it for its rebuild specs whenever the token is configured, even when the MCP is the primary backend. In this pack Tier A is a read; a direct Graph write is a last resort for fields no MCP tool or CLI flag exposes, still PAUSED and still confirm-gated.
+
+Run it from the workspace root, where `.env` holds `ACCESS_TOKEN`, and let the shell read the token:
+
+```bash
+source .env
+curl -s "https://graph.facebook.com/v25.0/<CREATIVE_ID>?fields=id,name,object_story_spec,asset_feed_spec,degrees_of_freedom_spec,url_tags,contextual_multi_ads&access_token=$ACCESS_TOKEN"
+```
+
+The same shape reads any entity: replace the ID and the `fields` list with the per-entity lists in [meta-rebuild-fields.md](meta-rebuild-fields.md), section 3.
+
+**Token handling rule.** The token is read from `.env` by the shell and referenced only as `$ACCESS_TOKEN` inside the command. It must never be echoed, logged, or pasted into chat, memory files, or job prompts: do not `cat .env`, do not `echo $ACCESS_TOKEN`, do not run the command with the token typed out, and do not record the expanded command line anywhere (including `run-log.md` and the `memory/` snapshots). If it lands anywhere it should not, treat it as leaked and generate a new one.
 
 ---
 

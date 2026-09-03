@@ -42,7 +42,7 @@ Fifteen skills, one pipeline: research → create → launch → monitor.
 | Skill | What it does |
 |---|---|
 | `ad-agent-orchestrator` | The front door. Takes a plain-English request ("make me new ads for the spring sale") and routes it through the right skills, end to end. |
-| `account-audit` | A read-only 90-day deep dive of each connected ad account, over either Meta backend (MCP or CLI), written to a per-account memory file the creative, copy, and launch skills consult before building anything new. |
+| `account-audit` | A read-only 90-day deep dive of each connected ad account, over either Meta backend (MCP or CLI), written to a per-account memory file the creative, copy, and launch skills consult before building anything new. It also captures the exact API objects (targeting, placements, bidding, attribution, creative enhancement settings) so new ads can mirror what already runs. |
 | `brand-setup` | Interviews you about your brand and product, then writes BRAND.md, the context file every other skill reads. |
 | `competitor-ad-research` | Searches the Meta Ad Library for competitor ads and distills them into hooks, angles, and a creative brief. Needs the Meta MCP; the Ad Library is not in the CLI. |
 | `human-ad-copy` | Writes primary text, headlines, and hooks, then strips every known AI-writing tell so the copy reads like a person wrote it. |

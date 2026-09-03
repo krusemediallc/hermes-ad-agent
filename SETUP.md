@@ -149,6 +149,8 @@ All Meta actions in this pack (research, campaign building, launching, insights)
 
 **Recommendation:** try Route A first. If it cannot be connected within a few minutes (Hermes builds differ in MCP support), go to Route B rather than stalling; the user loses nothing they need for this pack. If both end up available, prefer the MCP for its broader surface. Say once which backend you are using, and do not switch backends in the middle of a create sequence without telling the user.
 
+**Route B's token is recommended even when the MCP connects.** The account audit in Step 5 captures the account's exact settings so new ads can mirror what already runs, and the MCP cannot read creative enhancement settings (`degrees_of_freedom_spec`) or the ad set attribution and frequency settings exactly; only the system user token can, through `meta ads ... get --fields` or a direct Graph read. If the user is willing to do the token steps in Route B (b) and (c) alongside Route A, the audit runs at full fidelity; otherwise it records those fields as data gaps. The token lives only in the workspace-root `.env` and is never echoed, logged, or pasted into chat. Details: [docs/meta-rebuild-fields.md](docs/meta-rebuild-fields.md).
+
 **First, detect what is already there.**
 
 1. Look in your tool list for tools whose names start with `ads_` (for example `ads_get_ad_accounts`, `ads_create_campaign`, `ads_insights_performance_trend`). If they are present, the Meta MCP is already connected: Route A is live, go straight to Checkpoint 4. Trust your live tool list; Meta ships new tools and renames things between versions.
@@ -267,6 +269,8 @@ meta ads page list --output json
 ## Step 5: Account deep dive
 
 Run the **account-audit** skill (`/account-audit`) for every ad account the user wants Hermes managing. It is a strictly read-only 90-day deep dive over whichever Meta backend Checkpoint 4 found: it reads structure, settings, targeting, creatives, copy, and performance, and it never creates, updates, or activates anything on either backend. For each account it writes one memory file at `memory/accounts/act_<ACCOUNT_ID>.md` at the workspace root (the repo clone directory recorded in Checkpoint 1). Every creative, copy, and launch skill in this pack consults that memory before building net-new ads, so everything Hermes builds is informed by what already works in the account.
+
+The audit also captures exact rebuild specs (the raw campaign, ad set, ad, and creative objects: targeting, placements, bidding, attribution, tracking, and creative enhancement settings) to `memory/accounts/act_<ACCOUNT_ID>/specs/`, so `meta-ad-launcher` can mirror a proven structure instead of guessing. How faithful that mirror can be depends on the read tier available: with the Route B token (Tier A direct Graph read, or Tier B `meta ads ... get --fields`) the capture is complete; on the MCP alone (Tier C) it is partial, and the audit lists what it could not read under "Data Gaps". See [docs/meta-rebuild-fields.md](docs/meta-rebuild-fields.md).
 
 If Checkpoint 4 surfaced more than one ad account, ask the user which accounts Hermes should manage and audit each of those, one at a time. Show the user each account's audit summary as it finishes. The memory files are user data: this repo's `.gitignore` ignores `memory/`, so they are never committed.
 
