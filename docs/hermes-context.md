@@ -68,7 +68,7 @@ Whichever route you use, set it with the discovered paths, not a guessed `~/.her
 
 ## What not to put in each
 
-- **Anywhere:** secrets. No tokens, no keys, no `.env` contents. A Meta token belongs only in the managed app's environment (the hosting provider's env UI) or the env file that `hermes config env-path` reports; `config.yaml` references it as `${META_MCP_TOKEN}`, never as a literal.
+- **Anywhere:** secrets. No tokens, no keys, no `.env` contents. A Meta token belongs only in the managed app's environment (the hosting provider's env UI) or the env file that `hermes config env-path` reports; `config.yaml` references it as `${META_MCP_LONG_TOKEN}` on the direct transport, or names the bridge script that reads it on the bridge transport; never as a literal.
 - **Setup state:** anything beyond the seven fields above. No account IDs, no secrets, no brand facts; those have their own homes.
 - **My Notes:** long text, the brand voice, audit findings, lists of ads. Those live in `BRAND.md` and `memory/accounts/`. Duplicating them into a 2,200-character file guarantees they go stale.
 - **User Profile:** business facts, offers, prices, targets. Those are `BRAND.md`.

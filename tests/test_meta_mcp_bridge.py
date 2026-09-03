@@ -50,15 +50,18 @@ TOKEN_B = "EAA" + "fakeBridgeToken0987654321"
 ALL_TOKENS = (TOKEN_A, TOKEN_B)
 
 UPSTREAM = "https://mcp.facebook.com/ads"
-TOKEN_VAR = "META_MCP_TOKEN"
+# The bridge reads the long-lived token; META_MCP_TOKEN is the human handoff variable
+# that scripts/meta_token_maintenance.py exchanges, and the bridge never reads it.
+TOKEN_VAR = "META_MCP_LONG_TOKEN"
+HANDOFF_VAR = "META_MCP_TOKEN"
 BASE_MTIME = 1_700_000_000
 JSON_HEADERS = {"content-type": "application/json"}
 SSE_HEADERS = {"content-type": "text/event-stream; charset=utf-8"}
 
 # Environment variables the bridge consults. Every test scrubs them so a developer's
 # real shell environment cannot change the outcome.
-BRIDGE_ENV_VARS = ("META_MCP_TOKEN", "META_MCP_ENV_FILE", "HERMES_HOME",
-                   "META_MCP_UPSTREAM", "META_MCP_TOKEN_VAR")
+BRIDGE_ENV_VARS = ("META_MCP_LONG_TOKEN", "META_MCP_TOKEN", "META_MCP_ENV_FILE", "META_MCP_DOTENV_PATH",
+                   "HERMES_HOME", "META_MCP_UPSTREAM", "META_MCP_UPSTREAM_URL", "META_MCP_TOKEN_VAR")
 
 
 # ----------------------------------------------------------------------------
@@ -412,6 +415,19 @@ class ResolveEnvFileTests(ScrubbedEnvMixin, unittest.TestCase):
                                       {"META_MCP_ENV_FILE": "/env-var/.env", "HERMES_HOME": "/hh"}),
                          "/env-var/.env")
 
+    def test_dotenv_path_alias_is_honored_after_env_file(self):
+        self.assertEqual(self.resolve(None, {"/alias/.env", "/hh/.env", "/data/.env"},
+                                      {"META_MCP_DOTENV_PATH": "/alias/.env", "HERMES_HOME": "/hh"}),
+                         "/alias/.env")
+        self.assertEqual(self.resolve(None, {"/env-var/.env", "/alias/.env"},
+                                      {"META_MCP_ENV_FILE": "/env-var/.env", "META_MCP_DOTENV_PATH": "/alias/.env"}),
+                         "/env-var/.env")
+        self.assertEqual(self.resolve(None, {"/alias/.env"},
+                                      {"META_MCP_ENV_FILE": "/missing/.env", "META_MCP_DOTENV_PATH": "/alias/.env"}),
+                         "/alias/.env")
+        self.assertEqual(self.resolve("/x/.env", {"/x/.env", "/alias/.env"}, {"META_MCP_DOTENV_PATH": "/alias/.env"}),
+                         "/x/.env")
+
     def test_hermes_home_env_is_next(self):
         self.assertEqual(self.resolve(None, {"/hh/.env", "/data/.env"}, {"HERMES_HOME": "/hh"}), "/hh/.env")
 
@@ -445,6 +461,7 @@ class JsonrpcErrorTests(unittest.TestCase):
 class ArgParserTests(ScrubbedEnvMixin, unittest.TestCase):
     def test_defaults(self):
         args = bridge_mod.build_arg_parser().parse_args([])
+        self.assertEqual(bridge_mod.DEFAULT_TOKEN_VAR, "META_MCP_LONG_TOKEN")
         self.assertEqual(args.upstream, bridge_mod.DEFAULT_UPSTREAM)
         self.assertEqual(args.token_var, bridge_mod.DEFAULT_TOKEN_VAR)
         self.assertIsNone(args.env_file)
@@ -459,6 +476,27 @@ class ArgParserTests(ScrubbedEnvMixin, unittest.TestCase):
             args = bridge_mod.build_arg_parser().parse_args([])
         self.assertEqual(args.upstream, "https://alt.facebook.com/ads")
         self.assertEqual(args.token_var, "OTHER_TOKEN")
+
+    def test_upstream_url_alias_and_precedence(self):
+        with mock.patch.dict(os.environ, {"META_MCP_UPSTREAM_URL": "https://alias.facebook.com/ads"}):
+            self.assertEqual(bridge_mod.build_arg_parser().parse_args([]).upstream, "https://alias.facebook.com/ads")
+        with mock.patch.dict(os.environ, {"META_MCP_UPSTREAM": "https://primary.facebook.com/ads",
+                                          "META_MCP_UPSTREAM_URL": "https://alias.facebook.com/ads"}):
+            self.assertEqual(bridge_mod.build_arg_parser().parse_args([]).upstream, "https://primary.facebook.com/ads")
+            self.assertEqual(bridge_mod.build_arg_parser().parse_args(["--upstream", "https://flag.facebook.com/x"]).upstream,
+                             "https://flag.facebook.com/x")
+        with mock.patch.dict(os.environ, {"META_MCP_UPSTREAM": "", "META_MCP_UPSTREAM_URL": ""}):
+            self.assertEqual(bridge_mod.build_arg_parser().parse_args([]).upstream, bridge_mod.DEFAULT_UPSTREAM)
+
+    def test_main_honors_dotenv_path_alias(self):
+        env_path = self.make_env_file(TOKEN_A)
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"META_MCP_DOTENV_PATH": env_path}), \
+                mock.patch("sys.stdin", io.StringIO("")), contextlib.redirect_stderr(err):
+            rc = bridge_mod.main(["--upstream", "http://127.0.0.1:8000/mcp", "--allow-any-upstream", "--workers", "1"])
+        self.assertEqual(rc, 0)
+        self.assertIn("env_file=%s var=META_MCP_LONG_TOKEN" % env_path, err.getvalue())
+        assert_no_tokens(self, err.getvalue(), "stderr")
 
     def test_main_runs_to_stdin_eof(self):
         env_path = self.make_env_file(TOKEN_A)
@@ -596,6 +634,16 @@ class TokenSourceTests(ScrubbedEnvMixin, unittest.TestCase):
         path = self.make_env_file(None, extra_lines=("ACCESS_TOKEN='%s'" % TOKEN_A,))
         self.assertEqual(bridge_mod.TokenSource(path, "ACCESS_TOKEN").get(), TOKEN_A)
         self.assertIsNone(bridge_mod.TokenSource(path, TOKEN_VAR).get())
+
+    def test_handoff_variable_is_never_read(self):
+        # A human's freshly pasted short-lived token lives in META_MCP_TOKEN until the maintenance
+        # script exchanges it; the bridge must keep using the long-lived variable only.
+        path = self.make_env_file(None, extra_lines=("%s='%s'" % (HANDOFF_VAR, TOKEN_B),))
+        self.assertIsNone(bridge_mod.TokenSource(path, bridge_mod.DEFAULT_TOKEN_VAR).get())
+        with mock.patch.dict(os.environ, {HANDOFF_VAR: TOKEN_B}):
+            self.assertIsNone(bridge_mod.TokenSource(path, bridge_mod.DEFAULT_TOKEN_VAR).get())
+        write_env_file(path, TOKEN_A, mtime=BASE_MTIME + 1, extra_lines=("%s='%s'" % (HANDOFF_VAR, TOKEN_B),))
+        self.assertEqual(bridge_mod.TokenSource(path, bridge_mod.DEFAULT_TOKEN_VAR).get(), TOKEN_A)
 
 
 # ----------------------------------------------------------------------------

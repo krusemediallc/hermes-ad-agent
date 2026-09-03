@@ -234,10 +234,12 @@ Offer the six, plainly:
    through the pack's bridge, SETUP.md Step 4 Route A2, and the env file
    holds `META_APP_ID` and `META_APP_SECRET`): a weekly **script job with
    no LLM** that runs `scripts/meta_token_maintenance.py`, re-exchanges the
-   token with Meta, rewrites the env-file line only when the expiry
-   actually advanced, and delivers one outcome line to the user's channel.
-   It sits alongside the reminder, never instead of it: `REAUTH_REQUIRED`
-   still needs a human.
+   token with Meta, rewrites the `META_MCP_LONG_TOKEN` line only when the
+   expiry actually advanced (or when `--replace-same-expiry` is set), and
+   delivers a short Markdown report to the user's channel. It is also how a
+   person reauthorizes: a fresh short-lived token on the `META_MCP_TOKEN`
+   handoff line, then the same script. It sits alongside the reminder,
+   never instead of it: `REAUTH_REQUIRED` still needs a human.
 
 The user can pick any subset. If they already have jobs from a previous
 setup, list them first with your scheduler's list action so you extend
@@ -441,12 +443,20 @@ send: "Meta token expires in <n> days (<date>)" or "Meta token expired on
 <date>", plus the renewal steps: generate a new Meta user token with the
 seven scopes (ads_mcp_management, ads_read, ads_management,
 catalog_management, business_management, pages_show_list,
-instagram_basic), exchange it for a long-lived token, store it in the
-managed app environment or the file hermes config env-path names, restart
-the managed app, run hermes mcp test for the Meta server, then update the
-date in BRAND.md via brand-setup. If scripts/onboarding_doctor.py exists
-under the workspace root, run python3 scripts/onboarding_doctor.py
---meta-token-check (read-only; check --help first) and include its
+instagram_basic) from the same Meta app; on the bridge transport put it on
+the META_MCP_TOKEN handoff line of the env file hermes config env-path
+names (if the old token is still valid, first empty the
+META_MCP_LONG_TOKEN value on its line so the script takes the handoff
+path) and run python3 scripts/meta_token_maintenance.py --markdown
+--hermes-test from the workspace root (it exchanges it, writes
+META_MCP_LONG_TOKEN, empties the handoff value, and tests; no restart); on
+the direct transport exchange it for a long-lived token, store it as
+META_MCP_LONG_TOKEN in the managed app environment or that env file, and
+restart the managed app; then run hermes mcp test for the Meta server and
+update the date in BRAND.md via brand-setup (docs/meta-ads-mcp-renewal.md).
+If scripts/onboarding_doctor.py exists under the workspace root, run
+python3 scripts/onboarding_doctor.py --meta-token-check META_MCP_LONG_TOKEN
+(read-only; check --help first) and include its
 token-expiry line, which never contains the token. HARD RULES: read-only;
 never print, log, or request
 a token value; never call ads_activate_entity, ads_update_entity, or any
@@ -462,35 +472,52 @@ LLM and no prompt, and it needs no preamble. It requires the Meta MCP
 bridge (`scripts/meta_mcp_bridge.py` as the `meta_ads` command-type
 server, so a rotated token is used on the next request without a restart)
 and `META_APP_ID` plus `META_APP_SECRET` in the same env file as
-`META_MCP_TOKEN`. Create it as a script job with a delivery target; typical
-shape, verify every flag with `hermes cron --help`:
+`META_MCP_LONG_TOKEN`. Create it as a script job with a delivery target;
+typical shape, verify every flag with `hermes cron --help`:
 
 ```bash
 hermes cron add --name meta-token-maintenance --schedule "0 9 * * 1" \
-  --script "cd <workspace root> && python3 scripts/meta_token_maintenance.py --json" \
+  --script "cd <workspace root> && python3 scripts/meta_token_maintenance.py --markdown --hermes-test" \
   --no-agent --deliver <confirmed channel>
 ```
 
 Before scheduling it, run the script once by hand from the workspace root
-with `--dry-run --json` (writes nothing), then once live with `--json`, and
-read the outcome line each time. The outcomes, exactly: `RENEWED` (new
-token, expiry advanced by more than a day, written and smoke-tested),
+with `--dry-run --markdown` (writes nothing), then once live with
+`--markdown --hermes-test`, and read the report each time. The report
+opens with a headline (`SUCCESS` when the token was renewed or a
+same-expiry candidate was deliberately written; otherwise the outcome name
+itself), then an outcome detail line and the facts behind it (current and
+candidate expiry, whether the credential was replaced, whether the expiry
+advanced, the MCP smoke test, the Hermes test, and a "Required action"
+line). The details, exactly: `RENEWED` (new token, expiry advanced by more
+than a day, written and smoke-tested; headline `SUCCESS`),
 `REPLACED_SAME_EXPIRY` (new token string, expiry not advanced; not written
-unless `--replace-same-expiry`; not a renewal, the old token stays valid),
-`NO_CHANGE` (same token, or exchange skipped because the app credentials
-are absent), `REAUTH_REQUIRED` (token invalid or expired, or Meta refused
-the exchange; a human generates a new token, SETUP.md Step 4 Route A (a)),
-`FAILED` (lock held, missing scopes, compare-and-swap mismatch, write or
-smoke-test failure, rolled back). Exit `0` healthy, `1` warning (unwritten
-`REPLACED_SAME_EXPIRY`, or fewer than `--min-days` remaining, default 21),
-`2` action needed. Its writes are atomic and guarded (lock file,
-compare-and-swap on the token line, MCP `initialize` plus `tools/list`
-smoke test with the new token, rollback on failure), and it never prints a
-token or the app secret. Honesty note to pass on to the user: on the one
-observed re-exchange Meta returned an equal-expiry token, so whether
-re-exchange ever advances expiry is unverified; the script reports what
-happened, and the reminder in (e) stays because the manual path still
-exists. Full reference: `scripts/README.md` and
+unless `--replace-same-expiry`, and then headline `SUCCESS`; unwritten it
+keeps its own name as the headline; never a renewal, the old token stays
+valid),
+`NO_CHANGE` (same token, a shorter-expiry candidate that was retained, or
+exchange skipped because the app credentials are absent),
+`REAUTH_REQUIRED` (token invalid or expired, or Meta refused the exchange;
+a human generates a new short-lived user token from the same Meta app,
+puts it on the `META_MCP_TOKEN` handoff line, and runs the same script,
+which exchanges it, writes `META_MCP_LONG_TOKEN`, clears the handoff line,
+and tests), `FAILED` (lock held, candidate missing a scope or minted by
+another app, `META_MCP_LONG_TOKEN` line missing or duplicated,
+compare-and-swap mismatch, write or smoke-test failure). Exit `0` healthy,
+`1` warning (unwritten `REPLACED_SAME_EXPIRY`, or fewer than `--min-days`
+remaining, default 21), `2` action needed. Its writes are atomic and
+guarded (lock file, compare-and-swap on the token line, MCP `initialize`
+plus `tools/list` smoke test with the new token); the previous token is
+restored only when Meta rejected the new one (`401`/`403`), otherwise the
+validated candidate is kept and the report says so. It never prints a
+token or the app secret. For the first weeks on a new install add
+`--replace-same-expiry` to the scheduled command so the rotation path is
+proven end to end, then remove it. Honesty note to pass on to the user: on
+the one observed re-exchange Meta returned an equal-expiry token, so
+whether re-exchange ever advances expiry is unverified; a `NO_CHANGE` week
+is Meta's decision, not a skipped attempt, and the reminder in (e) stays
+because the manual path still exists. Full reference:
+`docs/meta-ads-mcp-renewal.md`, `scripts/README.md`, and
 `docs/meta-authentication.md`, "Automatic renewal".
 
 ### 4. Show the user what exists now
@@ -508,8 +535,8 @@ After creating the jobs:
    any data read. A first run that reports "no data" without showing the
    connection check passed is a failed verification; fix the prompt before
    leaving. If the token maintenance job was created, run it once through
-   the scheduler too and confirm the user actually received its outcome
-   line on the channel; delivery is part of that job's success, because an
+   the scheduler too and confirm the user actually received its report on
+   the channel; delivery is part of that job's success, because an
    undelivered `REAUTH_REQUIRED` is silent until the token dies. If it did
    not arrive, fix delivery before trusting the job.
 3. Tell the user how to manage everything themselves. Hermes builds
@@ -563,9 +590,10 @@ brand-setup's update flow first.
   verify the channel with the user and test with a manual run.
 - Do not turn the token maintenance job into an agent job or give it a
   prompt; it is a script job with no LLM, and its only deliverable is the
-  script's outcome line. Never edit the `META_MCP_TOKEN` line by hand while
-  that job exists (it rewrites the line under a lock and a compare-and-swap),
-  and never let a `REPLACED_SAME_EXPIRY` be described to the user as a
+  script's report. Never edit the `META_MCP_LONG_TOKEN` line by hand while
+  that job exists (it rewrites the line under a lock and a compare-and-swap);
+  a new token goes on the `META_MCP_TOKEN` handoff line and through the
+  script. Never let a `REPLACED_SAME_EXPIRY` be described to the user as a
   renewal.
 - Do not remove the credential expiry reminder because the maintenance job
   exists; `REAUTH_REQUIRED` still needs a human, and the reminder is the

@@ -26,7 +26,7 @@ REQUIRED_SCOPES = [
     "business_management", "pages_show_list", "instagram_basic",
 ]
 GRAPH = "https://graph.facebook.com/v25.0"
-TOKEN_NAMES = ("META_MCP_TOKEN", "ACCESS_TOKEN", "AD_ACCOUNT_ID")
+TOKEN_NAMES = ("META_MCP_LONG_TOKEN", "META_MCP_TOKEN", "META_APP_ID", "ACCESS_TOKEN", "AD_ACCOUNT_ID")
 GITIGNORE_REQUIRED = ("memory/", "ad-runs/", "research/", "outputs/", ".env")
 SKIP_SKILL_DIRS = {"__pycache__"}
 SECRET_RE = re.compile(r"(EAA[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9_\-]{30,}|sk-[A-Za-z0-9]{20,})")
@@ -222,7 +222,7 @@ def check_config_secrets(d, paths):
             hits.append("line %d: long token-like literal" % n)
     if hits:
         d.block("config secrets", "%s: %s" % (cfg, "; ".join(hits)),
-                "SETUP.md Step 4: move the token to the env file / managed-app environment and reference ${META_MCP_TOKEN}")
+                "SETUP.md Step 4: move the token to the env file as META_MCP_LONG_TOKEN (bridge) or reference ${META_MCP_LONG_TOKEN} from the config")
     else:
         d.ok("config secrets", "%s has no literal bearer tokens" % cfg)
 
@@ -253,7 +253,7 @@ def check_env_file(d, paths, workspace):
     if env_names:
         d.ok("process env", "set in the process environment: %s" % env_names)
     if not found_any and not env_names:
-        d.warn("env file", "no env file and no META_MCP_TOKEN/ACCESS_TOKEN in the environment",
+        d.warn("env file", "no env file and no META_MCP_LONG_TOKEN/META_MCP_TOKEN/ACCESS_TOKEN in the environment",
                "SETUP.md Step 4: fine only if Meta is connected via the dashboard/OAuth relay; otherwise store the token in the managed app environment or 'hermes config env-path'")
 
 
@@ -305,7 +305,8 @@ def iso(ts):
 
 
 def check_meta_token(d, env_name, paths, workspace):
-    names = [env_name] if env_name != "META_MCP_TOKEN" else ["META_MCP_TOKEN", "ACCESS_TOKEN"]
+    names = ([env_name] if env_name != "META_MCP_LONG_TOKEN"
+             else ["META_MCP_LONG_TOKEN", "META_MCP_TOKEN", "ACCESS_TOKEN"])
     token, used = None, None
     sources = [paths.get("env")] if paths and paths.get("env") else []
     sources.append(workspace / ".env")
@@ -322,7 +323,7 @@ def check_meta_token(d, env_name, paths, workspace):
             break
     if not token:
         d.block("meta token", "none of %s set in the environment or env files" % names,
-                "SETUP.md Step 4: store the Meta user token and reference it as ${META_MCP_TOKEN}")
+                "SETUP.md Step 4: store the Meta user token as META_MCP_LONG_TOKEN in the env file (the bridge reads it there)")
         return
     _SECRETS.add(token)
     dbg, err = graph_get("/debug_token", {"input_token": token, "access_token": token})
@@ -348,7 +349,7 @@ def check_meta_token(d, env_name, paths, workspace):
     fix = "SETUP.md Step 4 (Route A token): "
     if data.get("is_valid") is False or (days is not None and days <= 0):
         d.block("meta token", summary + " (EXPIRED or invalid)", fix + "issue a new user token; Meta gave no refresh token, renewal is manual")
-    elif used == "META_MCP_TOKEN" and ttype != "USER":
+    elif used in ("META_MCP_LONG_TOKEN", "META_MCP_TOKEN") and ttype != "USER":
         d.block("meta token", summary + " (the hosted Meta MCP requires a USER token with ads_mcp_management; a SYSTEM_USER token is fine for the Meta Ads CLI route only)",
                 fix + "generate a user token with all seven scopes")
     elif missing:
@@ -365,8 +366,9 @@ def main():
     ap = argparse.ArgumentParser(description="Read-only onboarding doctor for hermes-ad-agent.")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--workspace", help="workspace root (default: setup-state workspace_root, else cwd)")
-    ap.add_argument("--meta-token-check", nargs="?", const="META_MCP_TOKEN", metavar="ENV_NAME",
-                    help="validate the Meta token named ENV_NAME (default META_MCP_TOKEN, fallback ACCESS_TOKEN) against the Graph API")
+    ap.add_argument("--meta-token-check", nargs="?", const="META_MCP_LONG_TOKEN", metavar="ENV_NAME",
+                    help="validate the Meta token named ENV_NAME (default META_MCP_LONG_TOKEN, then META_MCP_TOKEN, "
+                         "then ACCESS_TOKEN) against the Graph API")
     ap.add_argument("--arcads", action="store_true", help="out of scope; see the note it prints")
     args = ap.parse_args()
 

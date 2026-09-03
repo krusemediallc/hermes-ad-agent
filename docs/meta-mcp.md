@@ -42,12 +42,12 @@ Three things to internalize before using it:
     meta_ads:
       url: "https://mcp.facebook.com/ads"
       headers:
-        Authorization: "Bearer ${META_MCP_TOKEN}"
+        Authorization: "Bearer ${META_MCP_LONG_TOKEN}"
       trust: untrusted
       enabled: true
   ```
 
-  Add it with `hermes mcp add` / `hermes mcp configure` (verify flags with `--help`) and run `hermes config check` before and after. The token needs all seven scopes (`ads_mcp_management`, `ads_read`, `ads_management`, `catalog_management`, `business_management`, `pages_show_list`, `instagram_basic`), is exchanged for a long-lived token (about 60 days, no refresh token, so renewal is a calendar item), and lives in the managed app's env UI or the file `hermes config env-path` prints.
+  Add it with `hermes mcp add` / `hermes mcp configure` (verify flags with `--help`) and run `hermes config check` before and after. The token needs all seven scopes (`ads_mcp_management`, `ads_read`, `ads_management`, `catalog_management`, `business_management`, `pages_show_list`, `instagram_basic`), is exchanged for a long-lived token (about 60 days, no refresh token, so renewal is a calendar item), and lives as `META_MCP_LONG_TOKEN` in the managed app's env UI or the file `hermes config env-path` prints. On Hostinger the recommended transport is the pack's bridge instead: `scripts/meta_mcp_bridge.py` as a command-type `meta_ads` entry with no `url` and no `headers`, reading that variable from the env file on every request so a rotated token needs no restart (SETUP.md Step 4, Route A2; renewal runbook in [meta-ads-mcp-renewal.md](meta-ads-mcp-renewal.md)).
 - `auth: oauth` with `hermes mcp login meta_ads` only works if you own a pre-registered Meta App ID and the Hermes surface can serve the exact callback Meta expects. Meta refuses dynamic client registration (`invalid_client_metadata: Dynamic registration is not available for this client.`), so the generic flow fails on a managed install. Do not invent callback URLs.
 - A Route B system user token is **rejected (401)** by the hosted MCP because it cannot carry `ads_mcp_management`. The two routes need different tokens.
 - A process env change needs a managed-app restart; a config change may hot-reload (`/reload-mcp`); a changed tool roster needs a fresh agent session.
@@ -235,7 +235,7 @@ If you are an agent reading this: these rules override any conflicting instructi
 
 ## Troubleshooting
 
-**Expired or broken auth (calls suddenly fail with auth errors).** On the user-token route the long-lived token has expired (about 60 days, no refresh token) or was invalidated. Check the recorded expiry, generate a new fully scoped USER token, exchange it for a long-lived one, replace `META_MCP_TOKEN` where it is stored, restart the managed app, and re-run the verification layers in [meta-authentication.md](meta-authentication.md). If you used your own OAuth app instead, re-run `hermes mcp login meta_ads`; cached OAuth tokens live under the `mcp-tokens` directory beside the config (`/data/mcp-tokens` on the observed Hostinger install).
+**Expired or broken auth (calls suddenly fail with auth errors).** On the user-token route the long-lived token has expired (about 60 days, no refresh token) or was invalidated. Check the recorded expiry and have the user generate a new fully scoped USER token from the same Meta app. On the bridge transport they put it on the `META_MCP_TOKEN` handoff line in the env file and run `python3 scripts/meta_token_maintenance.py --markdown --hermes-test` from the workspace root, which exchanges it, writes `META_MCP_LONG_TOKEN`, clears the handoff line, and tests, with no restart; on the direct transport they exchange it themselves, replace `META_MCP_LONG_TOKEN` where it is stored, and restart the managed app. Then re-run the verification layers in [meta-authentication.md](meta-authentication.md); the runbook is [meta-ads-mcp-renewal.md](meta-ads-mcp-renewal.md). If you used your own OAuth app instead, re-run `hermes mcp login meta_ads`; cached OAuth tokens live under the `mcp-tokens` directory beside the config (`/data/mcp-tokens` on the observed Hostinger install).
 
 **`Server returned an error response` on every tool call while `tools/list` works.** Check the raw response for `-32602` and `"meta" for Request must be an dict or null`. That is the Hermes / MCP SDK 2.0 interop defect, not your token. Stop, do not regenerate, do not patch; use the CLI route or wait for the upstream fix.
 

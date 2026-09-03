@@ -33,12 +33,17 @@ Hermes configuration (typical shape; verify flags with ``hermes mcp add --help``
         trust: untrusted
         enabled: true
 
-The env file holds one line ``META_MCP_TOKEN='<fully scoped USER access token>'``.
-``scripts/meta_token_maintenance.py`` rewrites that line atomically; this bridge notices.
+The env file holds one line ``META_MCP_LONG_TOKEN='<fully scoped USER access token>'``
+(``META_MCP_TOKEN`` is the short-lived handoff variable a human fills after re-authorizing;
+the bridge never reads it). ``scripts/meta_token_maintenance.py`` rewrites the long-token
+line atomically; this bridge notices on the next request.
+
+Environment overrides: ``META_MCP_UPSTREAM`` or ``META_MCP_UPSTREAM_URL`` (upstream URL),
+``META_MCP_ENV_FILE`` or ``META_MCP_DOTENV_PATH`` (env file), ``META_MCP_TOKEN_VAR``.
 
 Usage::
 
-    python3 scripts/meta_mcp_bridge.py [--env-file PATH] [--token-var META_MCP_TOKEN]
+    python3 scripts/meta_mcp_bridge.py [--env-file PATH] [--token-var META_MCP_LONG_TOKEN]
                                        [--upstream URL] [--timeout SECONDS]
                                        [--log-level info|debug|warning]
                                        [--allow-any-upstream]
@@ -59,7 +64,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 DEFAULT_UPSTREAM = "https://mcp.facebook.com/ads"
-DEFAULT_TOKEN_VAR = "META_MCP_TOKEN"
+DEFAULT_TOKEN_VAR = "META_MCP_LONG_TOKEN"
 ALLOWED_HOST_SUFFIX = ".facebook.com"
 FALLBACK_PROTOCOL_VERSION = "2025-06-18"
 TOKEN_RE = re.compile(r"EAA[A-Za-z0-9]{10,}")
@@ -181,8 +186,9 @@ def resolve_env_file(explicit: str | None) -> str | None:
     candidates = []
     if explicit:
         candidates.append(explicit)
-    if os.environ.get("META_MCP_ENV_FILE"):
-        candidates.append(os.environ["META_MCP_ENV_FILE"])
+    for var in ("META_MCP_ENV_FILE", "META_MCP_DOTENV_PATH"):
+        if os.environ.get(var):
+            candidates.append(os.environ[var])
     hermes_home = os.environ.get("HERMES_HOME")
     if hermes_home:
         candidates.append(os.path.join(hermes_home, ".env"))
@@ -523,7 +529,8 @@ def serve(bridge: Bridge, stdin=None, stdout=None, workers: int = 8, log=None):
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="stdio MCP bridge to Meta's hosted Ads MCP")
-    p.add_argument("--upstream", default=os.environ.get("META_MCP_UPSTREAM", DEFAULT_UPSTREAM))
+    p.add_argument("--upstream", default=os.environ.get("META_MCP_UPSTREAM")
+                   or os.environ.get("META_MCP_UPSTREAM_URL") or DEFAULT_UPSTREAM)
     p.add_argument("--env-file", default=None, help="dotenv file holding the token (default: auto-detect)")
     p.add_argument("--token-var", default=os.environ.get("META_MCP_TOKEN_VAR", DEFAULT_TOKEN_VAR))
     p.add_argument("--timeout", type=float, default=120.0)
