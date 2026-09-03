@@ -6,19 +6,22 @@ description: >-
   that stays quiet unless something notable happens, threshold alerts for
   spend spikes, CPA breaches against the BRAND.md target, rejected or
   disapproved ads, and account errors, an optional monthly account-memory
-  refresh that re-runs the read-only account-audit skill, and an optional
-  weekly credential-expiry reminder. Every job resolves the workspace root
-  from the setup-state file, checks the Meta connection and token expiry
-  before reading data, and alerts loudly and pauses itself on an auth
-  failure instead of reporting "no data". It interviews the user about
-  which automations to enable, confirms thresholds, times, and delivery
-  channel, creates the cron jobs with read-only prompts, then shows what
-  was scheduled and how to change or remove it. Use it when the user says
-  things like "set up daily reports", "send me a performance report every
-  morning", "alert me if my ads spend too much", "watch my ads while they
-  run", "tell me if an ad gets rejected", "remind me before my Meta token
-  expires", "automate my ad reporting", or "schedule ad check-ins". Every
-  job it creates is read-only: alerts recommend actions but never execute
+  refresh that re-runs the read-only account-audit skill, an optional
+  weekly credential-expiry reminder, and, on the Meta MCP bridge transport,
+  an optional weekly token maintenance script job (no LLM) that reports
+  honestly whether Meta renewed the token. Every agent job resolves the
+  workspace root from the setup-state file, checks the Meta connection and
+  token expiry before reading data, and alerts loudly and pauses itself on
+  an auth failure instead of reporting "no data". It interviews the user
+  about which automations to enable, confirms thresholds, times, and
+  delivery channel, creates the cron jobs with read-only prompts, then
+  shows what was scheduled and how to change or remove it. Use it when the
+  user says things like "set up daily reports", "send me a performance
+  report every morning", "alert me if my ads spend too much", "watch my
+  ads while they run", "tell me if an ad gets rejected", "remind me before
+  my Meta token expires", "keep my Meta token renewed", "automate my ad
+  reporting", or "schedule ad check-ins". Every job it creates is
+  read-only toward Meta ads: alerts recommend actions but never execute
   them.
 ---
 
@@ -112,7 +115,11 @@ a quiet day.
   from the workspace root, reports the token's `expires_at`, days
   remaining, and scopes without printing the token (verify its flags with
   `--help`); the jobs may use it as the second source when it is present,
-  otherwise the BRAND.md date is the source.
+  otherwise the BRAND.md date is the source. On the bridge transport the
+  maintenance job's non-secret state file,
+  `$HERMES_HOME/hermes-ad-agent/token-maintenance-state.json` (last
+  outcome, `expires_at`, days remaining), is a third source the jobs may
+  read; it holds dates and counters only, never a token.
 - **The `meta-performance-loop` skill installed.** The daily digest attaches
   it so the scheduled session reports the same way an on-demand ask does.
   The optional monthly memory refresh needs the `account-audit` skill
@@ -209,7 +216,7 @@ rows counts as a quiet day only after step 2 succeeded in this run.
 
 ### 1. Ask which automations to enable
 
-Offer the five, plainly:
+Offer the six, plainly:
 
 1. **Daily digest**: yesterday's performance plus recommendations, every
    morning.
@@ -223,6 +230,14 @@ Offer the five, plainly:
 5. **Credential expiry reminder** (optional, recommended on the MCP
    route): a weekly read-only check of the token expiry date that warns at
    21, 14, and 7 days out and every week after expiry.
+6. **Token maintenance job** (optional, only when Meta is connected
+   through the pack's bridge, SETUP.md Step 4 Route A2, and the env file
+   holds `META_APP_ID` and `META_APP_SECRET`): a weekly **script job with
+   no LLM** that runs `scripts/meta_token_maintenance.py`, re-exchanges the
+   token with Meta, rewrites the env-file line only when the expiry
+   actually advanced, and delivers one outcome line to the user's channel.
+   It sits alongside the reminder, never instead of it: `REAUTH_REQUIRED`
+   still needs a human.
 
 The user can pick any subset. If they already have jobs from a previous
 setup, list them first with your scheduler's list action so you extend
@@ -439,6 +454,45 @@ ads_create_* tool; never run any meta ads ... update, create, or delete
 command.
 ```
 
+**(f) Token maintenance job** (optional, bridge transport only), schedule
+example `0 9 * * 1` (Mondays, adjusted for timezone), name
+`meta-token-maintenance`, same delivery target. This is the one job in the
+suite that is **not an agent job**: it runs a deterministic script with no
+LLM and no prompt, and it needs no preamble. It requires the Meta MCP
+bridge (`scripts/meta_mcp_bridge.py` as the `meta_ads` command-type
+server, so a rotated token is used on the next request without a restart)
+and `META_APP_ID` plus `META_APP_SECRET` in the same env file as
+`META_MCP_TOKEN`. Create it as a script job with a delivery target; typical
+shape, verify every flag with `hermes cron --help`:
+
+```bash
+hermes cron add --name meta-token-maintenance --schedule "0 9 * * 1" \
+  --script "cd <workspace root> && python3 scripts/meta_token_maintenance.py --json" \
+  --no-agent --deliver <confirmed channel>
+```
+
+Before scheduling it, run the script once by hand from the workspace root
+with `--dry-run --json` (writes nothing), then once live with `--json`, and
+read the outcome line each time. The outcomes, exactly: `RENEWED` (new
+token, expiry advanced by more than a day, written and smoke-tested),
+`REPLACED_SAME_EXPIRY` (new token string, expiry not advanced; not written
+unless `--replace-same-expiry`; not a renewal, the old token stays valid),
+`NO_CHANGE` (same token, or exchange skipped because the app credentials
+are absent), `REAUTH_REQUIRED` (token invalid or expired, or Meta refused
+the exchange; a human generates a new token, SETUP.md Step 4 Route A (a)),
+`FAILED` (lock held, missing scopes, compare-and-swap mismatch, write or
+smoke-test failure, rolled back). Exit `0` healthy, `1` warning (unwritten
+`REPLACED_SAME_EXPIRY`, or fewer than `--min-days` remaining, default 21),
+`2` action needed. Its writes are atomic and guarded (lock file,
+compare-and-swap on the token line, MCP `initialize` plus `tools/list`
+smoke test with the new token, rollback on failure), and it never prints a
+token or the app secret. Honesty note to pass on to the user: on the one
+observed re-exchange Meta returned an equal-expiry token, so whether
+re-exchange ever advances expiry is unverified; the script reports what
+happened, and the reminder in (e) stays because the manual path still
+exists. Full reference: `scripts/README.md` and
+`docs/meta-authentication.md`, "Automatic renewal".
+
 ### 4. Show the user what exists now
 
 After creating the jobs:
@@ -453,7 +507,11 @@ After creating the jobs:
    workdir and could see `.env`), and the connection check passed before
    any data read. A first run that reports "no data" without showing the
    connection check passed is a failed verification; fix the prompt before
-   leaving.
+   leaving. If the token maintenance job was created, run it once through
+   the scheduler too and confirm the user actually received its outcome
+   line on the channel; delivery is part of that job's success, because an
+   undelivered `REAUTH_REQUIRED` is silent until the token dies. If it did
+   not arrive, fix delivery before trusting the job.
 3. Tell the user how to manage everything themselves. Hermes builds
    typically expose chat commands (a `/cron`-style command with list, edit,
    pause, resume, and remove actions), terminal equivalents, and a
@@ -503,3 +561,12 @@ brand-setup's update flow first.
   stable; the prompt says how to discover them.
 - If a job's delivery channel is not connected, the message goes nowhere;
   verify the channel with the user and test with a manual run.
+- Do not turn the token maintenance job into an agent job or give it a
+  prompt; it is a script job with no LLM, and its only deliverable is the
+  script's outcome line. Never edit the `META_MCP_TOKEN` line by hand while
+  that job exists (it rewrites the line under a lock and a compare-and-swap),
+  and never let a `REPLACED_SAME_EXPIRY` be described to the user as a
+  renewal.
+- Do not remove the credential expiry reminder because the maintenance job
+  exists; `REAUTH_REQUIRED` still needs a human, and the reminder is the
+  path that reaches them.

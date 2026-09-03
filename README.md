@@ -20,7 +20,7 @@ You talk to it in plain English, from Telegram, WhatsApp, Discord, or the web ch
 
 | Route | Auth | Needs | Best when |
 |---|---|---|---|
-| Meta Ads MCP server | A Meta **user** access token with seven scopes, stored as a managed secret and referenced by the MCP config (OAuth only if you own a pre-registered Meta app with a supported callback) | A Hermes build that connects to remote MCP servers, plus a Meta app of your own to mint the token | You want the widest tool surface (Ad Library search, previews, anomaly signals) |
+| Meta Ads MCP server | A Meta **user** access token with seven scopes, stored as a managed secret and referenced by the MCP config (OAuth only if you own a pre-registered Meta app with a supported callback) | A Hermes build that connects to remote MCP servers, or one that runs the pack's local bridge as a command-type MCP server, plus a Meta app of your own to mint the token | You want the widest tool surface (Ad Library search, previews, anomaly signals) |
 | Meta Ads CLI | System user token from Business Suite | Python 3.12+ and a terminal | The MCP will not connect on your build, an MCP operation is missing (local file upload, one flexible ad with the full copy pool), or you prefer a plain CLI |
 
 Both routes create everything paused and follow the same confirmation rules. Neither token is ever pasted into chat or written literally into a config file. SETUP.md Step 4 covers both (Route A and Route B); the long-form references are [docs/meta-authentication.md](docs/meta-authentication.md) (start here), [docs/meta-mcp.md](docs/meta-mcp.md), [docs/meta-cli.md](docs/meta-cli.md), and [docs/support-matrix.md](docs/support-matrix.md) for which operation runs on which backend.
@@ -31,6 +31,7 @@ Everything below happened on a real Hostinger managed Hermes (v0.20.x) against a
 
 - Paused image and video ads were built end to end, each carrying 5 primary texts, 5 headlines, and 3 descriptions inside one flexible ad unit.
 - The Meta MCP route works with a fully scoped user token as a bearer header. A generic OAuth login and a system user token both fail against the hosted MCP.
+- On Hostinger the MCP route runs through the pack's local bridge (`scripts/meta_mcp_bridge.py`), so a rotated token takes effect on the next call with no restart, and a deterministic weekly maintenance job (`scripts/meta_token_maintenance.py`, no LLM) reports honestly whether Meta advanced the expiry (`RENEWED`) or only handed back a same-expiry token (`REPLACED_SAME_EXPIRY`, which is what the one observed re-exchange returned).
 - Some MCP operations were not available on the account (media upload tools still rolling out, no flexible copy on `ads_create_creative`); those steps ran through the Meta Ads CLI instead. The pack blocks and tells you when the route you connected cannot do the step, rather than quietly building something smaller.
 - The Arcads MCP connected and generated creatives; actual credit charges were reported per operation.
 

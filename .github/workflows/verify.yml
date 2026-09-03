@@ -34,6 +34,9 @@ jobs:
           find . -name '*.py' -not -path './.git/*' -print0 \
             | xargs -0 -n1 python3 -m py_compile
 
+      - name: Unit tests (bridge and token maintenance; offline, no Hermes, no Meta)
+        run: python3 -m unittest discover -s tests -v
+
       - name: Secret pattern scan (tokens must never be committed)
         run: |
           set +e

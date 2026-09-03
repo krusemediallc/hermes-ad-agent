@@ -44,8 +44,9 @@ Rule: never hard-code `~/.hermes`. Discover the home once (SETUP.md Step 0) and 
 
 | Change | Takes effect |
 |---|---|
-| Config file edit (`hermes config set`, `hermes mcp add`) | may hot-reload; verify with `hermes mcp list` and `hermes mcp test` |
+| Config file edit (`hermes config set`, `hermes mcp add`, including the bridge entry) | may hot-reload; verify with `hermes mcp list` and `hermes mcp test` |
 | Process environment variable (Hostinger env UI, shell profile) | only after the managed app restarts or redeploys |
+| The `META_MCP_TOKEN` line in the env file, Meta MCP bridge transport | the next request; the bridge re-reads the file per call, so nothing restarts |
 | MCP server added or its tool list changed | a fresh agent session (tool schemas load at session start) |
 | Memory file entries | next session (frozen snapshot at session start) |
 
@@ -60,7 +61,20 @@ Rule: never hard-code `~/.hermes`. Discover the home once (SETUP.md Step 0) and 
 | Local CLI / TUI (`hermes` on a machine with a browser) | yes | works as ONE fresh `hermes mcp login arcads` | user-token header only | working directory is the launch directory, not `terminal.cwd` |
 | Managed gateway, headless (Hostinger, SSH only) | yes | fragile: a terminal login on a headless box can emit two flows and collide on the callback port; stop and use the dashboard relay or the Hermes remote OAuth guide (https://hermes-agent.nousresearch.com/docs/guides/oauth-over-ssh) | user-token header only | most cron and messaging sessions run here |
 
-Meta's hosted MCP does not support Hermes's generic OAuth (issuer mismatch, then `invalid_client_metadata: Dynamic registration is not available for this client`). Meta's own documentation offers OAuth only against a pre-registered Meta app with an exact callback the client supports, and a programmatic bearer route with a user access token. The bearer route is the documented Route A in this pack. Users who own a Meta app and a supported callback may try OAuth; it is untested here.
+Meta's hosted MCP does not support Hermes's generic OAuth (issuer mismatch, then `invalid_client_metadata: Dynamic registration is not available for this client`). Meta's own documentation offers OAuth only against a pre-registered Meta app with an exact callback the client supports, and a programmatic bearer route with a user access token. The bearer route is the documented Route A in this pack, carried either as a header in the config (direct transport) or by the local bridge (below), which reads the same user token from the env file. Users who own a Meta app and a supported callback may try OAuth; it is untested here.
+
+---
+
+## Meta MCP transports (Route A)
+
+Both transports use the same fully scoped USER token and the same server name (`meta_ads`), so registered tool names and every skill's backend detection are identical. Pick one; never keep both entries.
+
+| Transport | Config entry type | Token lives in | Token change applies | Handles the empty `_meta` blocker | Requirements |
+|---|---|---|---|---|---|
+| Direct URL | `url: "https://mcp.facebook.com/ads"` with `headers: Authorization: "Bearer ${META_MCP_TOKEN}"` | managed env UI or the env file | after a managed-app restart or redeploy | no (blocked on MCP SDK 2.0) | a Hermes build that connects to remote MCP servers |
+| Bridge (`scripts/meta_mcp_bridge.py`), recommended on Hostinger | `command: python3` with `args: ["/absolute/path/to/scripts/meta_mcp_bridge.py", "--env-file", "/absolute/env/file"]` | the env file only (the bridge reads a file, not the process environment) | on the next request, no restart | yes (strips an empty `params._meta`, preserves a non-empty one) | any Python 3 (standard library only; `python3` or `/opt/venv/bin/python3`); a Hermes build that runs command-type MCP servers; the env file holding `META_MCP_TOKEN` under that single name, mode `0600`; absolute paths in `args`; `trust: untrusted`; upstream `https` on `facebook.com` (anything else is refused unless `--allow-any-upstream`, which is for local tests only) |
+
+Bridge flags, all optional: `--env-file`, `--token-var META_MCP_TOKEN`, `--upstream https://mcp.facebook.com/ads`, `--timeout 120`, `--log-level info`, `--allow-any-upstream`. It never writes the token anywhere, redacts error text, and forwards Meta's real JSON-RPC error code and message instead of a generic error. Install steps and the `META_MCP_LONG_TOKEN` migration note: SETUP.md Step 4, Route A2.
 
 ---
 
@@ -72,10 +86,21 @@ Meta's hosted MCP does not support Hermes's generic OAuth (issuer mismatch, then
 | Underlying | HTTP `400`, JSON-RPC `-32602`, message `"meta" for Request must be an dict or null` |
 | Cause | MCP Python SDK 2.0 sends `params._meta: {}`; Meta's server rejects an empty object where it expects a dict or null |
 | Is it credentials? | No. A raw read-only `tools/list` with the same bearer and no `_meta` succeeds |
-| What to do | Detect the signature, stop, record it. Use the Meta Ads CLI (Route B) for Meta until the upstream fix lands, and retest Route A after the next Hermes update |
-| What not to do | Regenerate tokens, re-add the server, patch `/opt/hermes-agent`, site-packages, or the SDK from this repo |
+| What to do | Detect the signature, stop, record it. Switch Route A to the bridge transport above, which strips the empty object before it reaches Meta. If the bridge cannot run, use the Meta Ads CLI (Route B) for Meta until the upstream fix lands, and retest the direct transport after the next Hermes update |
+| What not to do | Regenerate tokens, re-add the server as a URL, patch `/opt/hermes-agent`, site-packages, or the SDK from this repo |
 
 Status semantics that matter when diagnosing: `hermes mcp list` reports `enabled` for a failing server (config state, not health); `hermes mcp test` must be read as text; and a tool visible to `hermes mcp test` is not usable by an agent session that started before the registration.
+
+---
+
+## Scheduled jobs: agent jobs and one script job
+
+| Job | Kind | Schedule (typical) | Touches the token? | Delivery |
+|---|---|---|---|---|
+| Daily digest, hourly check, threshold alerts, monthly memory refresh, credential-expiry reminder (`ad-reporting-automations`) | agent jobs with read-only prompts | per the skill | never; they read the expiry date from BRAND.md and check the connection | the user's channel |
+| `meta-token-maintenance` (`scripts/meta_token_maintenance.py`) | **script job, no agent, no LLM** (`--no-agent`; verify the flag with `hermes cron --help`) | weekly, `0 9 * * 1` | yes: re-exchanges it and rewrites the env-file line only on `RENEWED`, under a lock, a compare-and-swap, and a smoke test, with rollback | the user's channel; delivery of the outcome line is part of success |
+
+The maintenance job requires the bridge transport (so the new token is used without a restart) and `META_APP_ID` plus `META_APP_SECRET` in the same env file. Its outcomes are `RENEWED`, `REPLACED_SAME_EXPIRY`, `NO_CHANGE`, `REAUTH_REQUIRED`, and `FAILED`; exit `0` healthy, `1` warning, `2` action needed. It does not replace the expiry reminder: `REAUTH_REQUIRED` still needs a human, and whether re-exchange ever advances expiry is unverified (the one observed re-exchange returned an equal-expiry token). Details: `docs/meta-authentication.md`, "Automatic renewal".
 
 ---
 
@@ -127,7 +152,7 @@ Cost rules that follow from the first real run: only `creditsCharged` in the res
 | System user token | yes | yes | rejected (`401`; cannot carry `ads_mcp_management`) |
 | User token with all seven scopes | yes | yes (but the CLI route documents a system user token) | yes |
 
-Seven scopes for the MCP: `ads_mcp_management`, `ads_read`, `ads_management`, `catalog_management`, `business_management`, `pages_show_list`, `instagram_basic`. Long-lived user tokens last about 60 days; Meta returns no refresh token, so renewal is manual and the expiry date is recorded in `BRAND.md` (Meta Assets) and checked by every reporting job.
+Seven scopes for the MCP: `ads_mcp_management`, `ads_read`, `ads_management`, `catalog_management`, `business_management`, `pages_show_list`, `instagram_basic`. Long-lived user tokens last about 60 days; Meta returns no refresh token, so renewal is manual and the expiry date is recorded in `BRAND.md` (Meta Assets) and checked by every reporting job. On the bridge transport the weekly maintenance script re-exchanges the token and reports honestly whether the expiry advanced (`RENEWED`) or not (`REPLACED_SAME_EXPIRY`); the manual path stays in place because the advancing case is unverified.
 
 ---
 

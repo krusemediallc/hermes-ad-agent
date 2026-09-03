@@ -59,10 +59,10 @@ If it reports a pending config migration, a parse error, or a deprecated key, **
 **(d) Terminal, Python, and network.**
 
 - You have a shell/exec tool. On a Hostinger managed Hermes you also have the in-browser terminal in hPanel (Hermes, then Manage, then CLI); commands work the same there.
-- `python3 --version` works. The onboarding doctor (Step 1) and the copy-approval hash in the launcher need any Python 3; the Meta Ads CLI (Step 4, Route B) needs 3.12 or later, or `uv`, which can fetch one (`uv --version || pipx --version || python3 -m pip --version`).
+- `python3 --version` works. The onboarding doctor (Step 1), the Meta MCP bridge (Step 4, Route A2), the token maintenance script (Step 7), and the copy-approval hash in the launcher need any Python 3 (standard library only); the Meta Ads CLI (Step 4, Route B) needs 3.12 or later, or `uv`, which can fetch one (`uv --version || pipx --version || python3 -m pip --version`).
 - You can reach the internet (clone a repo, reach `mcp.arcads.ai`, and reach either `mcp.facebook.com` or `graph.facebook.com`).
 
-**(e) What you must never do to this environment.** Never patch `/opt/hermes-agent`, the Hermes package in site-packages, or the MCP SDK from this repo, even to work around a known defect. This pack is skills, docs, and one read-only doctor script; every workaround it offers is a configuration choice or a backend switch.
+**(e) What you must never do to this environment.** Never patch `/opt/hermes-agent`, the Hermes package in site-packages, or the MCP SDK from this repo, even to work around a known defect. This pack is skills, docs, and a few small standard-library scripts (a read-only doctor, a local MCP bridge you run as a command-type MCP server, and a token maintenance job); every workaround it offers is a configuration choice, that local bridge, or a backend switch. Nothing under `/opt/hermes-agent` changes.
 
 **Checkpoint 0:** you know the `hermes` executable path and version, `$HERMES_HOME`, the config path, and the env-file path; `hermes config check` passes with nothing pending; `python3` runs; you have a terminal and network. If the CLI route is planned for Meta, you also know whether `python3` is 3.12 or later and which installer (`uv`, `pipx`, or `pip`) is available.
 
@@ -278,10 +278,10 @@ Set `arcads_connected` to `true` in the setup-state file.
 
 All Meta actions in this pack (research, campaign building, launching, insights) go through one Meta backend. There are two supported backends:
 
-- **Route A: Meta Ads MCP with a user access token.** Meta's official Ads MCP server at `https://mcp.facebook.com/ads`, authenticated with a bearer token that the user generates once. Broadest read surface (Ad Library search, ad previews, anomaly signals, diagnostics). Two write gaps: it uploads media from public URLs only (the local-file upload tools were still being rolled out and unavailable on the first real account), and its creative tool takes one message, one headline, and one description, so it cannot build a flexible ad unit with multiple text variants.
+- **Route A: Meta Ads MCP with a user access token.** Meta's official Ads MCP server at `https://mcp.facebook.com/ads`, authenticated with a bearer token that the user generates once. Broadest read surface (Ad Library search, ad previews, anomaly signals, diagnostics). Two write gaps: it uploads media from public URLs only (the local-file upload tools were still being rolled out and unavailable on the first real account), and its creative tool takes one message, one headline, and one description, so it cannot build a flexible ad unit with multiple text variants. Route A has two transports: **A1**, Hermes connects to the URL directly, and **A2**, Hermes runs the pack's local bridge (`scripts/meta_mcp_bridge.py`) as a command-type MCP server and the bridge talks to Meta. A2 is the recommended transport on Hostinger: it gets past the empty `_meta` blocker described below and lets the token rotate without a restart.
 - **Route B: Meta Ads CLI with a system user token.** Meta's official command-line tool for the Marketing API, binary `meta`. Narrower read surface, but it uploads local image and video files and builds flexible creatives (multiple primary texts, headlines, and descriptions in one ad) with `--bodies`, `--titles`, `--descriptions`, or `--asset-feed-spec`.
 
-**Recommendation:** connect Route A for reading and research. **Also install Route B when the user wants local media uploads or a 5 primary text / 5 headline / 3 description flexible ad**, because those go through the CLI whenever the MCP lacks the capability. If Route A cannot be connected within a few minutes (or hits the known blocker below), go to Route B alone; the launch and report skills work the same. Say once which backend you are using, and never switch backends in the middle of a create sequence without telling the user.
+**Recommendation:** connect Route A for reading and research. **Also install Route B when the user wants local media uploads or a 5 primary text / 5 headline / 3 description flexible ad**, because those go through the CLI whenever the MCP lacks the capability. If the direct transport (A1) hits the known blocker below, switch to the bridge (A2) before anything else; if Route A still cannot be connected within a few minutes, go to Route B alone; the launch and report skills work the same. Say once which backend you are using, and never switch backends in the middle of a create sequence without telling the user.
 
 **Write policy for the whole pack.** Writes to Meta go only through the Meta MCP or the Meta Ads CLI. When the MCP lacks a capability, use the CLI for that operation if installed; otherwise stop and explain the gap and let the user choose. The Graph API is read-only in this pack (the audit's exact-settings capture and diagnostics), never an improvised write path.
 
@@ -294,7 +294,8 @@ All Meta actions in this pack (research, campaign building, launching, insights)
 ### Secret handling (both routes)
 
 - Tokens, authorization codes, and OAuth callback URLs are never pasted into chat, in either direction. The user types them into the terminal, the env file, or the hosting provider's environment UI; you refer to them by variable name only (`META_MCP_TOKEN`, `ACCESS_TOKEN`).
-- Never print an env file, never `env`/`printenv` without a filter, never `cat` the config file to check a value. Check presence with `grep -c '^META_MCP_TOKEN=' <env-file>` and shape with `grep -c 'Bearer \${META_MCP_TOKEN}' <config-file>` (both print a count, not the value).
+- Never print an env file, never `env`/`printenv` without a filter, never `cat` the config file to check a value. Check presence with `grep -c '^META_MCP_TOKEN=' <env-file>` and, on the direct transport, shape with `grep -c 'Bearer \${META_MCP_TOKEN}' <config-file>` (both print a count, not the value; the bridge transport's config carries no header at all, so that second grep prints `0` there by design).
+- Never edit the token line in the env file by hand once the maintenance job (Step 7) is in place; the script rewrites it under a lock and a compare-and-swap, and a hand edit in between can race it. Replacing an expired token is the one exception, and then the user does it in the terminal, not you in chat.
 - Secret-bearing files are mode `0600`: the env file, the workspace `.env`, and each file under `$HERMES_HOME/mcp-tokens/`.
 - A token never lands in `BRAND.md`, a skill, a cron prompt, your notes, the setup-state file, `ad-runs/`, or a commit. If one lands in chat by accident, treat it as exposed and have the user generate a new one once setup is done.
 - Arcads never needs a key from you; it is OAuth through the MCP. Meta needs a token on both routes, and the only homes for it are the ones above.
@@ -305,6 +306,8 @@ Meta's get-started page for the Ads MCP server documents two ways in: OAuth agai
 
 **Which token class works.** Only a **user** access token carrying all seven scopes below is accepted by the hosted MCP. An **app** token only validates and exchanges other tokens. A **system user** token works for the direct Marketing API and for the Meta Ads CLI (Route B) but is rejected with `401` by the MCP because it cannot carry `ads_mcp_management`. Do not try to reuse a Route B token here.
 
+**Two transports, one token.** Steps (a) and (b) below (make the token, store it) are shared. Steps (c) to (f) are the **direct transport (A1)**, where Hermes connects to `https://mcp.facebook.com/ads` itself. **Route A2, the bridge**, follows step (f) and is the recommended transport on Hostinger; if you already know the install is on Hostinger, read (a) and (b), then jump to Route A2.
+
 **(a) The user generates a token with all seven scopes.** Relay these steps; the user does them in the browser:
 
 1. Open the Graph API Explorer at developers.facebook.com/tools/explorer (or the token tool of their own Meta app) and select an app they administer. If they have none, creating one takes a few clicks.
@@ -313,14 +316,14 @@ Meta's get-started page for the Ads MCP server documents two ways in: OAuth agai
 4. Read the expiry off the debugger (long-lived user tokens last about 60 days) and tell you the **date** only. Meta returns no refresh token, so renewal is manual: the user repeats these steps before that date. You will record the date in Step 6 and, if the user opts in, schedule a reminder in Step 7.
 5. Copy the token once into the environment, never into chat.
 
-**(b) Store the token in the environment under `META_MCP_TOKEN`.** Two homes, pick the one that matches the deployment:
+**(b) Store the token in the environment under `META_MCP_TOKEN`.** Two homes, pick the one that matches the deployment and the transport:
 
-- **Hostinger managed app:** the environment variables UI for the app in hPanel. Adding or changing a process environment variable takes effect only after the managed app restarts or redeploys; plan that restart now.
-- **Anywhere else, or as a fallback:** the file that `hermes config env-path` printed in Step 0. The user appends one line, `META_MCP_TOKEN=<token>`, in the terminal (`nano`, `vi`, or `printf '%s\n' "META_MCP_TOKEN=$(cat)" >> <env-file>` and paste, which keeps it out of the shell history), then `chmod 600 <env-file>`.
+- **Hostinger managed app, direct transport (A1) only:** the environment variables UI for the app in hPanel. Adding or changing a process environment variable takes effect only after the managed app restarts or redeploys; plan that restart now.
+- **The bridge transport (A2), and anywhere else or as a fallback:** the file that `hermes config env-path` printed in Step 0 (`/data/.env` on Hostinger). The bridge reads a file, not the process environment, so on A2 this is the only home. The user appends one line, `META_MCP_TOKEN='<token>'`, in the terminal (`nano`, `vi`, or `printf '%s\n' "META_MCP_TOKEN='$(cat)'" >> <env-file>` and paste, which keeps it out of the shell history), then `chmod 600 <env-file>`. `META_MCP_TOKEN` is the single canonical name; if an earlier prototype stored it as `META_MCP_LONG_TOKEN`, rename that line rather than keeping two.
 
 Confirm presence without printing it: `grep -c '^META_MCP_TOKEN=' <env-file>` prints `1` (for the Hostinger UI route, confirm after the restart with `sh -c 'test -n "$META_MCP_TOKEN" && echo set || echo missing'`).
 
-**(c) Add the server, referencing the variable, never the value.** Prefer `hermes mcp add` / `hermes mcp configure` (check `--help` for the header flag); the entry must end up exactly in this shape:
+**(c) Direct transport (A1): add the server, referencing the variable, never the value.** Prefer `hermes mcp add` / `hermes mcp configure` (check `--help` for the header flag); the entry must end up exactly in this shape:
 
 ```yaml
 mcp_servers:
@@ -342,7 +345,7 @@ grep -c 'Bearer EAA' "$(hermes config path)"
 
 The first grep prints `1` (the placeholder is present); the second prints `0` (no literal token in the config). If the second is not `0`, the token was pasted in literally: replace it with the placeholder and have the user rotate the token.
 
-**(d) Restart boundary.** A config file edit may hot-reload; a process environment change on a managed app does not take effect until the app restarts or redeploys; a changed tool schema is only visible to a **fresh** agent session. So: restart the managed app (or the gateway) now, then open a fresh session before verifying.
+**(d) Restart boundary (A1).** A config file edit may hot-reload; a process environment change on a managed app does not take effect until the app restarts or redeploys; a changed tool schema is only visible to a **fresh** agent session. So: restart the managed app (or the gateway) now, then open a fresh session before verifying. (On the bridge transport, A2, a token change in the env file needs no restart at all; only the config change does. See Route A2.)
 
 **(e) Verify, layer by layer.**
 
@@ -353,11 +356,67 @@ hermes mcp test meta_ads
 
 `hermes mcp list` showing `enabled` is config state, not health; it says `enabled` for a failing server. Read the text of `hermes mcp test`; `Connection failed` with exit code 0 is a failure. If it succeeds, open a fresh normal session, discover the registered name of the accounts tool with `tool_search` (expect something like `mcp__meta_ads__ads_get_ad_accounts`) and call it. It must return the user's ad accounts with names and IDs.
 
-**(f) The known blocker (stop condition).** If `hermes mcp test meta_ads` reports only `Server returned an error response`, check the underlying error before doing anything else (a verbose or debug flag on `hermes mcp test`, the gateway log, or a raw JSON-RPC `tools/list` you send yourself with `curl`, read-only). The signature is HTTP `400` with JSON-RPC error `-32602` and the message `"meta" for Request must be an dict or null`. It means the MCP Python SDK 2.0 that Hermes ships sends `params._meta: {}` and Meta's server rejects the empty object. **This is a Hermes/SDK-to-Meta interop defect, not a credential problem.** Do not regenerate the token, do not re-add the server, and do not patch Hermes or the SDK. Record it, switch this install to Route B, and note in the Step 8 report that Route A is waiting on an upstream fix; retest Route A after the next Hermes update. Details and other signatures: Troubleshooting below and `docs/support-matrix.md`.
+**(f) The known blocker (stop condition).** If `hermes mcp test meta_ads` reports only `Server returned an error response`, check the underlying error before doing anything else (a verbose or debug flag on `hermes mcp test`, the gateway log, or a raw JSON-RPC `tools/list` you send yourself with `curl`, read-only). The signature is HTTP `400` with JSON-RPC error `-32602` and the message `"meta" for Request must be an dict or null`. It means the MCP Python SDK 2.0 that Hermes ships sends `params._meta: {}` and Meta's server rejects the empty object. **This is a Hermes/SDK-to-Meta interop defect, not a credential problem.** Do not regenerate the token, do not re-add the server as a URL, and do not patch Hermes or the SDK. Record it and switch this install to the bridge transport (Route A2, next), which strips the empty object before it reaches Meta. Only if the bridge cannot run (no `python3`, or a Hermes build that cannot add a command-type MCP server) switch to Route B and note in the Step 8 report that the direct transport is waiting on an upstream fix. Details and other signatures: Troubleshooting below and `docs/support-matrix.md`.
 
 **OAuth sub-note.** A user who owns a Meta app and can pre-register the exact callback URL that their Hermes surface supports can try `auth: oauth` on this server instead of the header. That path is untested in this pack and fails on Hermes's default dynamic registration; if the user does not already know what their callback URL is, skip it.
 
-Route A is connected when a fresh normal session can call the registered accounts tool and it returns accounts. Set `meta_backend` to `mcp` in the setup-state file (or `cli` if Route B is the only working backend).
+#### Route A2: the bridge (recommended on Hostinger)
+
+**When to use it.** Either of two reasons is enough: the direct transport hit the empty `_meta` blocker in (f), or the user wants token rotation without a gateway restart or a managed-app redeploy (the weekly maintenance job in Step 7 depends on this). On Hostinger both usually apply, which is why A2 is the recommended transport there.
+
+**What it is.** `scripts/meta_mcp_bridge.py` is a small standard-library Python script that Hermes runs as a **command-type MCP server** over stdio. It proxies every request to Meta's hosted Ads MCP over Streamable HTTP and does three things on the way:
+
+1. Reads the bearer token from the env file **on every request**, so a rotated token is used on the very next call, with no gateway restart and no managed-app redeploy.
+2. Strips the empty `params._meta` object that MCP SDK 2.0 clients add and Meta rejects with `-32602` `"meta" for Request must be an dict or null`. A non-empty `_meta` is passed through untouched.
+3. Passes Meta's real JSON-RPC error code and message back instead of a generic `Server returned an error response`, so the next failure is diagnosable.
+
+Security properties: it never writes the token anywhere, it redacts error text, and it refuses any upstream that is not `https` on `facebook.com` unless started with `--allow-any-upstream` (local tests only; never in a real config). It is a configuration choice, not a patch: nothing under `/opt/hermes-agent` or in site-packages changes.
+
+**Install.**
+
+1. **Token into the env file.** Do (a) and (b) above, choosing the env-file home in (b). The env file holds one line, `META_MCP_TOKEN='<fully scoped USER token>'`, mode `0600`. Confirm with `grep -c '^META_MCP_TOKEN=' <env-file>` (prints `1`). **Migration note:** if a prototype of this setup stored the token as `META_MCP_LONG_TOKEN`, rename that line to `META_MCP_TOKEN` and delete the old name; the bridge and the maintenance script read one alias only, and a leftover second line is how a stale token survives a rotation.
+2. **Optional, for the Step 7 maintenance job:** the user adds `META_APP_ID` and `META_APP_SECRET` (the Meta app that minted the token) to the **same** env file, in the terminal, never in chat. Without them the maintenance script still inspects and reports the token; it just cannot exchange it.
+3. **Add the server as a command-type entry.** Prefer `hermes mcp add` (verify the flags for a command-type server with `hermes mcp add --help`); the entry must end up in this shape, with absolute paths:
+
+   ```yaml
+   mcp_servers:
+     meta_ads:
+       command: python3
+       args: ["/absolute/path/to/hermes-ad-agent/scripts/meta_mcp_bridge.py", "--env-file", "/data/.env"]
+       trust: untrusted
+       enabled: true
+   ```
+
+   On Hostinger the workspace is typically `/data/workspace/hermes-ad-agent` and the env file `/data/.env`; substitute the real paths from Step 0 and Step 1. `python3` is enough because the bridge is standard library only; `/opt/venv/bin/python3` also works. Keep the server name `meta_ads` so registered tool names stay `mcp__meta_ads__...` and the skills' backend detection is unchanged. If a direct-URL `meta_ads` entry exists from (c), replace it; one entry per name, never both. There is no `headers:` block and no `${META_MCP_TOKEN}` reference in this entry: the bridge reads the token itself.
+
+   Other bridge flags, all optional: `--token-var META_MCP_TOKEN`, `--upstream https://mcp.facebook.com/ads`, `--timeout 120`, `--log-level info`. When `--env-file` is omitted the bridge resolves the file as `$META_MCP_ENV_FILE`, else `$HERMES_HOME/.env`, else `/data/.env`, else `~/.hermes/.env`; pass `--env-file` explicitly anyway, so a gateway or cron session with a different environment finds the same file.
+
+4. **Check, then reload.**
+
+   ```bash
+   hermes config check
+   grep -c 'Bearer EAA' "$(hermes config path)"
+   ```
+
+   The grep must print `0`. The config change itself may need `/reload-mcp` or a gateway restart (verify; a changed tool schema is only visible to a fresh session). After this one-time step, token changes in the env file need no restart at all.
+
+5. **Verify, layer by layer.**
+
+   ```bash
+   hermes mcp test meta_ads
+   ```
+
+   Read its text (`Connection failed` exits 0). Then open a **fresh normal session**, discover `mcp__meta_ads__ads_get_ad_accounts` with `tool_search`, and call it read-only. It must return the user's ad accounts with names and IDs. If the test reports a JSON-RPC error, the bridge has passed Meta's real code and message through: read them (a `401` is a token-class or scope problem, see Troubleshooting) instead of retrying.
+
+**How the restart boundary changes on A2.**
+
+| What changed | What it takes to apply |
+|---|---|
+| The token value in the env file (manual replacement, or the Step 7 maintenance job) | Nothing. The bridge reads the file on the next request. |
+| The `meta_ads` config entry (added, or its args changed) | May hot-reload; `/reload-mcp` or a gateway restart if `hermes mcp test` does not see it. |
+| The set of tools Meta advertises | A fresh agent session, as always. |
+
+Route A is connected, on either transport, when a fresh normal session can call the registered accounts tool and it returns accounts. Set `meta_backend` to `mcp` in the setup-state file (the bridge is a transport of the MCP route, not a third backend; use `cli` only if Route B is the only working backend).
 
 ### Route B: Meta Ads CLI (system user token)
 
@@ -431,7 +490,7 @@ meta ads page list --output json
 
 **Important warning to pass on to the user, on either route:** Meta's write operations, MCP tools and CLI commands alike, have no confirmation screen of their own. That is exactly why the skills in this pack enforce the paused-by-default and confirm-before-spend rules; do not bypass them.
 
-**Checkpoint 4:** from a **fresh normal session**, EITHER the registered Meta MCP accounts tool (discovered with `tool_search`, native name `ads_get_ad_accounts`) OR `meta ads adaccount list --output json` returns the user's ad accounts **with names and IDs**, and the user has confirmed they are the intended ones (when two accounts share a display name, the user picks by name AND ID). On Route A the token expiry date is known and written down for Step 6, `hermes config check` passes, and no literal bearer value exists in the config. The setup-state file's `meta_backend` is `mcp` or `cli`, and if both are installed you have told the user which operations will use which.
+**Checkpoint 4:** from a **fresh normal session**, EITHER the registered Meta MCP accounts tool (discovered with `tool_search`, native name `ads_get_ad_accounts`) OR `meta ads adaccount list --output json` returns the user's ad accounts **with names and IDs**, and the user has confirmed they are the intended ones (when two accounts share a display name, the user picks by name AND ID). On Route A the token expiry date is known and written down for Step 6, `hermes config check` passes, and no literal bearer value exists in the config (on A1 the config references `${META_MCP_TOKEN}`; on A2 it holds no header at all and names the bridge script by absolute path with an explicit `--env-file`, and the env file holds `META_MCP_TOKEN` under that single name). The setup-state file's `meta_backend` is `mcp` or `cli`, and if both are installed you have told the user which operations will use which.
 
 ---
 
@@ -519,9 +578,29 @@ Every job the skill creates follows four rules, and you should confirm them when
 
 **Credential-expiry reminder (optional, part of the suite).** On Route A, offer a small read-only job that runs daily, reads the expiry date, and messages the user 14, 7, and 1 days before the token expires with the renewal steps from Step 4 (a). It never touches the token itself and never attempts a renewal; Meta issues no refresh token, so renewal is a human action.
 
+**Token maintenance job (Route A2 only, optional, recommended).** If Meta is connected through the bridge and the env file also holds `META_APP_ID` and `META_APP_SECRET` (Step 4, Route A2, install step 2), offer the weekly maintenance job next to the reminder. It is a **script job with no LLM**: `scripts/meta_token_maintenance.py` is deterministic, inspects the current token with `debug_token`, re-exchanges it with Meta (`fb_exchange_token`), and rewrites the token line in the env file only when Meta actually advanced the expiry. Because the bridge re-reads the env file on every request, a passing run means the live gateway uses the new token on its next call, with no restart. It prints one outcome line and never a token. The outcomes, exactly: `RENEWED` (new token, expiry advanced by more than a day, written), `REPLACED_SAME_EXPIRY` (new token string but the expiry did not advance; not written unless `--replace-same-expiry`; this is not a renewal and the old token stays valid), `NO_CHANGE` (same token back, or the exchange was skipped because the app credentials are absent), `REAUTH_REQUIRED` (token invalid or expired, or Meta refused the exchange; a human must generate a new token), `FAILED` (lock held, missing scopes, compare-and-swap mismatch, or a write or smoke-test failure, rolled back). Exit codes: `0` healthy, `1` warning (`REPLACED_SAME_EXPIRY` unwritten, or fewer than `--min-days` remaining, default 21), `2` `REAUTH_REQUIRED` or `FAILED`. Full flag list and safety properties: `scripts/README.md`; the mechanism and the honesty note: `docs/meta-authentication.md`.
+
+Set it up in this order, and do not skip the delivery check:
+
+1. **Dry run first**, from the workspace root: `python3 scripts/meta_token_maintenance.py --dry-run --json`. It writes nothing and shows the outcome it would have reported, plus days remaining.
+2. **Then once live:** `python3 scripts/meta_token_maintenance.py --json`. Read the outcome line. `NO_CHANGE` or `REPLACED_SAME_EXPIRY` on a token with plenty of days left is a healthy first run.
+3. **Schedule it as a script job with a delivery target.** Typical shape (verify every flag with `hermes cron --help`; the job must run the script directly, with no agent and no prompt):
+
+   ```bash
+   hermes cron add --name meta-token-maintenance --schedule "0 9 * * 1" \
+     --script "cd /absolute/path/to/hermes-ad-agent && python3 scripts/meta_token_maintenance.py --json" \
+     --no-agent --deliver <the channel the user chats on>
+   ```
+
+4. **Run it once through the scheduler** (its run-now action) and confirm the user actually received the outcome message on that channel. Delivery of the outcome line is part of success: a maintenance job whose `REAUTH_REQUIRED` nobody sees is worse than no job. If it cannot deliver, fix delivery before trusting it.
+
+The script keeps a small non-secret state file at `$HERMES_HOME/hermes-ad-agent/token-maintenance-state.json` (last outcome, `expires_at`, `data_access_expires_at`, the last advancing expiry, consecutive non-advancing runs, days remaining); reporting jobs may read it as a second source for days remaining.
+
+**The reminder stays.** The maintenance job does not replace the expiry reminder. `REAUTH_REQUIRED` still needs a human to generate a new token (Step 4 (a)), and whether re-exchanging a long-lived token ever advances its expiry is **unverified**: on the one observed re-exchange Meta returned a token with the same expiry, which the script reports as `REPLACED_SAME_EXPIRY`, not as a renewal. Keep both jobs; the reminder and the alert path cover the manual case.
+
 If the user declines, note that they can run `/ad-reporting-automations` later.
 
-**Checkpoint 7:** either a reporting job exists (verify with `/cron list` or `hermes cron list`) whose prompt resolves the setup-state file, sets an explicit absolute workdir, checks credential expiry, and alerts and pauses on auth failure, or the user has explicitly declined for now. If Route A is live, the expiry reminder exists or was explicitly declined.
+**Checkpoint 7:** either a reporting job exists (verify with `/cron list` or `hermes cron list`) whose prompt resolves the setup-state file, sets an explicit absolute workdir, checks credential expiry, and alerts and pauses on auth failure, or the user has explicitly declined for now. If Route A is live, the expiry reminder exists or was explicitly declined. If Route A2 (the bridge) is live, the maintenance job exists as a script job (dry run and a live run both completed, and the user received the scheduled run's outcome message on their channel) or was explicitly declined.
 
 ---
 
@@ -545,11 +624,11 @@ Run this checklist from a **fresh normal session** and record the result of each
 1. **Doctor:** `python3 scripts/onboarding_doctor.py` from the workspace root passes, and you then set `last_doctor_at` in the setup-state file (the snippet in Step 1).
 2. **Meta backend agent-usable and verified:** EITHER the registered Meta MCP accounts tool (native `ads_get_ad_accounts`) OR `meta ads adaccount list --output json` returns accounts with names and IDs from this fresh session; note which. If both are installed, note that local uploads and flexible creatives use the CLI.
 3. **Arcads MCP agent-usable and verified:** the registered products tool (native `arcads_list_products`) returns a real response from this fresh session. No generation.
-4. **Durable:** `hermes config check` passes; the config holds `${META_MCP_TOKEN}` and no literal bearer; token files and env files are 0600; on Route A the expiry date is more than 14 days out (otherwise FRAGILE).
+4. **Durable:** `hermes config check` passes; the config holds no literal bearer (on A1 it references `${META_MCP_TOKEN}`; on A2 it has no header and names the bridge script by absolute path with `--env-file`); token files and env files are 0600; on Route A the expiry date is more than 14 days out (otherwise FRAGILE), and on A2 with the maintenance job the last outcome in `token-maintenance-state.json` is not `REAUTH_REQUIRED` or `FAILED`.
 5. **Skills discoverable:** every name in `skills-manifest.txt` is installed, invokable as a slash command, and diffed `ok`; you have the hub-versus-local list.
 6. **Account memory exists:** `memory/accounts/` holds one file per audited account with coverage counts, or Checkpoint 5 recorded why the audit was skipped.
 7. **BRAND.md exists at the workspace root** (real or demo), with the Meta connection line and, on Route A, the expiry date.
-8. **Scheduler state:** whether a reporting job and an expiry reminder were created (Step 7), and that each sets an explicit workdir.
+8. **Scheduler state:** whether a reporting job, an expiry reminder, and (on A2) the token maintenance job were created (Step 7); that each agent job sets an explicit workdir; and that the maintenance job is a script job (no agent, no prompt) whose delivered outcome message the user has actually received.
 9. **Project context loads:** the dashboard's Memory, then Project Context panel shows this pack's `AGENTS.md` (or the Step 1 Route 2 pointer).
 10. **Memory entries exist:** `$HERMES_HOME/memories/USER.md` and `MEMORY.md` each contain the Step 6 entry, or both are in `/memory pending`.
 
@@ -558,7 +637,7 @@ Then **report to your user** in plain language:
 - The overall status: COMPLETE, PARTIAL, or FRAGILE, with the reason if not complete.
 - Which skills you installed and what each one is for (one line each), and which are hub-managed versus local copies, with what that means for updates.
 - Which Meta route is connected (MCP, CLI, or both and how they split), which ad accounts it can see (name and ID), and which Arcads account the Arcads MCP maps to.
-- On Route A: the token expiry date and the next renewal date (at least a week before expiry), and that renewal is manual because Meta issues no refresh token.
+- On Route A: the token expiry date and the next renewal date (at least a week before expiry), and that renewal is manual because Meta issues no refresh token. On A2 with the maintenance job: which transport is in use (the bridge), that the weekly job reports one of `RENEWED`, `REPLACED_SAME_EXPIRY`, `NO_CHANGE`, `REAUTH_REQUIRED`, or `FAILED`, that `REPLACED_SAME_EXPIRY` is not a renewal, and that `REAUTH_REQUIRED` still means the user generates a new token by hand.
 - Which ad accounts were audited into memory files (and which were skipped, with the reason).
 - Whether Hermes now loads the pack's `AGENTS.md` at session start, and that the setup-state file is what lets fresh sessions and cron jobs find the workspace.
 - That the two memory entries are saved (or pending, with `/memory approve` to run), and whether the optional media buyer soul was installed, appended, or skipped.
@@ -584,7 +663,7 @@ Then **report to your user** in plain language:
 
 **`hermes skills audit` errors on some skills**: If those are the locally copied ones, the audit is complaining about missing hub identity, not about content. The Step 2 (c) diff is the content check.
 
-**Cron job created but nothing is delivered**: Check `hermes cron list` for the job's status and look at run output under `$HERMES_HOME/cron/output/<job_id>/`. Confirm the `deliver` target is a channel the user has actually connected. Confirm the job sets an explicit absolute workdir; a job running from the wrong directory cannot find `BRAND.md` and may report "no data" instead of an error.
+**Cron job created but nothing is delivered**: Check `hermes cron list` for the job's status and look at run output under `$HERMES_HOME/cron/output/<job_id>/`. Confirm the `deliver` target is a channel the user has actually connected. Confirm the job sets an explicit absolute workdir; a job running from the wrong directory cannot find `BRAND.md` and may report "no data" instead of an error. For the `meta-token-maintenance` script job, the deliverable is the script's single outcome line; if it did not arrive, fix the delivery target and re-run before trusting the job, because an undelivered `REAUTH_REQUIRED` is silent until the token dies.
 
 **A fresh session or cron job cannot find the workspace**: The setup-state file is missing or stale. Recreate it with the Step 1 snippet from inside the workspace root, then run the doctor.
 
@@ -596,7 +675,7 @@ Then **report to your user** in plain language:
 
 ### Environment and config
 
-**Set an environment variable but the server still fails with 401**: The Hermes process has not been restarted since the variable was added. Process environment changes are only picked up at process start; on a Hostinger managed app, restart or redeploy the app from hPanel, then open a fresh session. A config file change may hot-reload; an env change does not.
+**Set an environment variable but the server still fails with 401**: On the direct transport (A1), the Hermes process has not been restarted since the variable was added. Process environment changes are only picked up at process start; on a Hostinger managed app, restart or redeploy the app from hPanel, then open a fresh session. A config file change may hot-reload; an env change does not. On the bridge transport (A2) there is no restart to wait for: the bridge reads the env file per request, so a `401` there means the token itself is wrong (class, scopes, or expiry); see the Route A entries below.
 
 **`hermes mcp list` says `enabled` but nothing works**: `enabled` is the config flag, not a health check. Read the text of `hermes mcp test <server>`; then confirm from a fresh normal session that the registered tool name exists. Use the six-layer vocabulary in Step 8 to say exactly which layer fails.
 
@@ -622,7 +701,13 @@ Then **report to your user** in plain language:
 
 **The token worked an hour ago and now returns an auth error**: A short-lived Explorer token expired (they last hours). The user generates a new one and exchanges it for a long-lived token immediately (Step 4, Route A (a) 3), and you record the new expiry date. If a long-lived token expired, the ~60 days are up: same renewal; there is no refresh token.
 
-**`Server returned an error response` with a valid token**: Dig out the real error (verbose flag, gateway log, or your own read-only `tools/list` request). If it is HTTP `400`, JSON-RPC `-32602`, `"meta" for Request must be an dict or null`, this is the MCP SDK 2.0 interop defect: the SDK sends `params._meta: {}` and Meta rejects the empty object. It is not a credential problem. Do not rotate the token, do not patch Hermes or the SDK. Switch to Route B and retest Route A after the next Hermes update. See `docs/support-matrix.md`.
+**`Server returned an error response` with a valid token**: Dig out the real error (verbose flag, gateway log, or your own read-only `tools/list` request). If it is HTTP `400`, JSON-RPC `-32602`, `"meta" for Request must be an dict or null`, this is the MCP SDK 2.0 interop defect: the SDK sends `params._meta: {}` and Meta rejects the empty object. It is not a credential problem. Do not rotate the token, do not patch Hermes or the SDK. Switch the transport to the bridge (Step 4, Route A2), which strips the empty object; fall back to Route B only if the bridge cannot run, and retest the direct transport after the next Hermes update. See `docs/support-matrix.md`.
+
+**The bridge reports that no token was found** (Route A2): The bridge read the env file it was pointed at and found no `META_MCP_TOKEN` line, or it was pointed at the wrong file. Check, without printing values: the `--env-file` path in the config entry's `args` is absolute and matches what `hermes config env-path` prints; `grep -c '^META_MCP_TOKEN=' <that file>` prints `1`; the variable is spelled exactly `META_MCP_TOKEN` (a prototype's `META_MCP_LONG_TOKEN` line must be renamed, and `--token-var` only changes the name if you deliberately set it); the file is readable by the user the gateway runs as (mode `0600`, same owner). If `--env-file` is absent, the bridge tries `$META_MCP_ENV_FILE`, then `$HERMES_HOME/.env`, then `/data/.env`, then `~/.hermes/.env`, and a gateway session's environment can differ from your terminal's, which is why the guide says to pass it explicitly.
+
+**`REPLACED_SAME_EXPIRY` every week**: Expected, and not a failure. Meta handed back a different token string with the same expiry; the script did not write it (unless `--replace-same-expiry`) and the old token stays valid. This is **not** a renewal and buys no time; whether re-exchange ever advances expiry is unverified. Watch the days remaining in the outcome line and in `$HERMES_HOME/hermes-ad-agent/token-maintenance-state.json` (`consecutive non-advancing runs` climbs by one each week), and let the expiry reminder do its job: the user still generates a new token by hand before the date. Pass `--replace-same-expiry` only when you have a reason to rotate the token string itself; it does not change the expiry.
+
+**`REAUTH_REQUIRED`**: The token is invalid or expired, or Meta refused the exchange. No script fixes this; a human does, in this order. (1) The user generates a new **user** token with all seven scopes and exchanges it for a long-lived one (Step 4, Route A (a)). (2) The user replaces the `META_MCP_TOKEN` line in the env file in the terminal (single name, one line, mode `0600` kept), never through chat. On A2 nothing needs restarting; on A1 restart the managed app. (3) `hermes mcp test meta_ads`, read the text. (4) `python3 scripts/meta_token_maintenance.py --dry-run --json` from the workspace root to confirm the new expiry and days remaining without writing anything. (5) Update the expiry date in `BRAND.md` through brand-setup's update flow, then resume any reporting job that paused itself on the auth failure.
 
 **`ads_get_ad_accounts` returns nothing**: The token's user has no ad-account access, or the wrong business. Have the user confirm the account is visible to them in Ads Manager and that `ads_read` and `business_management` are on the token.
 

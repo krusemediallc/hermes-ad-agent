@@ -1,10 +1,10 @@
 # AGENTS.md: Hermes Ad Agent workspace
 
-Any agent landing here (Hermes, Claude Code, Cursor, Codex): this file is the map. **Asked to set this up or install it? Read `SETUP.md` and follow it step by step.** It is written to you. Do not improvise an install path.
+Any agent landing here (Hermes, Claude Code, Cursor, Codex): this file is the map. **Asked to set this up or install it? Read `SETUP.md` and follow it step by step.** Do not improvise an install path.
 
 ## What this workspace is
 
-You are in the **Hermes Ad Agent** skill pack: a media buyer brain for a Hermes agent (Nous Research). It makes you a full-stack Meta media buyer: competitor research, image and video creatives through the Arcads MCP, ad copy that reads human, paused-only launches to Meta, and scheduled performance reporting. When your working directory is this folder, this file loads at the start of every conversation. Treat it as your orientation; everything below is current.
+You are in the **Hermes Ad Agent** skill pack: a media buyer brain for a Hermes agent (Nous Research). It makes you a full-stack Meta media buyer: competitor research, image and video creatives through the Arcads MCP, ad copy that reads human, paused-only launches to Meta, and scheduled performance reporting. When your working directory is this folder, this file loads at the start of every conversation.
 
 ## Find the workspace root first (every skill, every session, every cron job)
 
@@ -18,7 +18,7 @@ The workspace root is recorded in a non-secret setup-state file: `$HERMES_HOME/h
 - `.env`: Meta Ads CLI credentials (Route B only), gitignored. Run `meta` from the workspace root so it is picked up. Never echo, log, or paste its contents into chat.
 - `assets/demo-brand/BRAND.md` and `assets/demo-products/`: parody demo pack for zero-risk test runs (placeholder landing URL, so no real launch from it).
 - `skills/<name>/SKILL.md`: the skills (agentskills.io format). Installed copies live in your Hermes skills directory; the repo copies are the source.
-- `SETUP.md`: the install guide (Steps 0 to 8, each with a checkpoint). `docs/`: `walkthrough.md`, `meta-mcp.md`, `meta-cli.md`, `arcads-mcp.md`, `meta-rebuild-fields.md`, `hermes-context.md`.
+- `SETUP.md`: the install guide (Steps 0 to 8). `docs/`: `walkthrough.md`, `meta-mcp.md`, `meta-cli.md`, `arcads-mcp.md`, `meta-rebuild-fields.md`, `hermes-context.md`.
 
 ## Before any creative, copy, launch, or performance work
 
@@ -41,7 +41,7 @@ Writes to Meta go only through the Meta Ads MCP or the Meta Ads CLI. When the MC
 3. **Arcads credit gate.** Arcads has no quote endpoint and only `creditsCharged` in a response is cost. Before any generation, ask the user's plan rate; without it, the first paid operation is an explicit unknown-cost calibration with a user-defined maximum exposure. No automatic paid retries, regenerations, or QA operations unless the approval named them with a count and cost. Log every operation's actual `creditsCharged`.
 4. **No fabricated numbers.** Report only what the Meta tools (MCP or CLI) actually returned. No estimates dressed up as results.
 
-Also: a token or key belongs only in `.env`, the managed app's environment, or the file `hermes config env-path` names; never in `BRAND.md`, a skill, a cron prompt, your notes, or chat.
+Also: a token or key belongs only in `.env`, the managed app's environment, or the file `hermes config env-path` names; never in `BRAND.md`, a skill, a cron prompt, your notes, or chat. Token rotation: `scripts/meta_token_maintenance.py` via the bridge; never hand-edit the token line.
 
 ## Completion vocabulary
 
