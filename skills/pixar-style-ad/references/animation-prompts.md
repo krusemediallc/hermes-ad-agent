@@ -14,7 +14,7 @@ Tool: `arcads_generate_video_seedance_20`. Check your live tool list; server ver
 - **Audio:** `audioEnabled: false`. Voiceover comes from Arcads TTS in post, never from an in-prompt narrator line.
 - **Prompt length:** 100 to 260 words, structured Subject + Action + Camera + Style + Constraints, with one primary action per shot and optional `[00:00]`-style timestamps.
 - **Forbidden words** (Seedance content checks reject or degrade on these): `cinematic`, `professional`, `stunning`, `8k`, `studio`, `perfect`. Substitute "3D animated film aesthetic", "polished", "high fidelity", "ivory white matte material".
-- **If a generation comes back `failed`,** never resend the same prompt. Strip flagged or forbidden words, tighten the wording, and retry (max 2 retries per beat). Note: Seedance bills at submission, so a failed content check may still show a charge.
+- **If a generation comes back `failed`,** never resend the same prompt. Strip flagged or forbidden words and tighten the wording. The corrected retry is a new credit-accounted generation: run it only inside the retry allowance the batch approval named (never more than 2 per beat), otherwise ask first. Note: Seedance bills at submission, so a failed content check may still show a charge; report its actual `creditsCharged`.
 - **Always end the prompt with the no-text constraint.** Seedance sometimes invents captions; every prompt must include "no on-screen text, no subtitles, no captions."
 
 ## Universal animation prompt structure
@@ -182,7 +182,7 @@ subtitles, no captions.
 2. **Lift the protagonist description verbatim** from the cast sheet into Beats 2 and 4. Do not paraphrase.
 3. **Keep the style block consistent** across all beats: "3D animated film aesthetic" everywhere, never Seedance's forbidden words.
 4. **Fire beats in parallel** once all stills are approved, then poll every asset id with `arcads_watch_asset` at a relaxed cadence (a clip typically takes around 7 minutes, occasionally up to 15).
-5. **Log each call** (model, duration, resolution, aspect ratio, reference count, asset id, and `creditsCharged` when known) to the run's `log.jsonl`.
+5. **Log each call** (tool, model, beat, duration, resolution, aspect ratio, reference count, count, date, asset id, final status, `creditsCharged` exactly as returned, and the daily-limit indicator) to the shared usage log `outputs/arcads-usage-log.jsonl` at the workspace root. Only `creditsCharged` is cost; the `mp` field is megapixel or usage metadata, never credits. Never log the signed download URL.
 
 ## Per-clip QA
 
@@ -195,7 +195,9 @@ Watch each finished clip end to end (or have the user do it) and check:
 - [ ] No burned-in text or subtitles appeared
 - [ ] The motion follows the prompt: the primary action happens and nothing random intrudes
 
-If any check fails, regenerate that beat with a tightened constraint block (for example "the protagonist's hands have exactly five fingers each, no morphing"). Max 2 retries per beat, then stop and ask the user.
+Report the QA states separately, never as one "QA passed": metadata-pass (duration, resolution, aspect, silent), sampled-frames-pass (the frame checks above), transcript-pass (voiced master only; Arcads transcription is credit-accounted and needs an allowance), motion/lip-sync review required (morphing and mouth plausibility need the clip watched end to end; frames never clear it), claims/branding check (product and packaging match the cast sheet), and human approval.
+
+If any check fails, a regeneration with a tightened constraint block (for example "the protagonist's hands have exactly five fingers each, no morphing") is a new credit-accounted generation: run it only inside the retry allowance the batch approval named (never more than 2 per beat), otherwise stop and ask the user.
 
 ## After animation
 

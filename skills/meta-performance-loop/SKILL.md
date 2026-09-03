@@ -60,6 +60,14 @@ calls from the Backend reference below.
    tests, not verdicts.
 6. **State the window and currency.** Every reported number carries its date
    range. Meta reports in the ad account's currency and timezone.
+7. **Auth before data, and empty is not healthy.** The first call of every
+   report is a connection check (the account listing must return the
+   BRAND.md account by ID), and the token expiry date from BRAND.md is
+   read alongside it. A zero-row insights result is "no delivery in the
+   window" only after that check passed in this session; before it, the
+   honest reading is "could not verify the connection". On an auth
+   failure, say so, give the renewal steps, and stop; never present an
+   empty table as a quiet week.
 
 ## Prerequisites
 
@@ -83,15 +91,55 @@ calls from the Backend reference below.
   trust your live tool list over the names in this file, use the closest
   available equivalent when a documented name is missing, and on the CLI
   trust `--help` output over the flags written here.
-- **BRAND.md** at the workspace root (the repo clone directory recorded
-  during setup). Read the target CPA or target ROAS from its
-  "## Performance Targets" section; the conversion event, ad account, and
-  related IDs from "## Meta Assets"; and the daily spend cap from
-  "## Budget Guardrails". If the file is missing, offer to run the
-  `brand-setup` skill. If the file exists but "## Performance Targets" is
-  empty or all `(not set)`, offer to run brand-setup's update flow right now
-  to fill in a target CPA or ROAS; you can still report raw numbers without
-  it, but say the comparison-to-goal section is unavailable.
+
+  **Tool naming.** The names in this file are server-native IDs
+  (`ads_insights_performance_trend`). The Hermes runtime registers them
+  under prefixed callable names (observed shape
+  `mcp__meta_ads__ads_insights_performance_trend`, where the middle
+  segment is the server name in the Hermes config). Search your live tool
+  list for the registered name and call that; do not conclude a tool is
+  missing until you have looked for the prefixed form.
+
+  **Connected but not agent-usable.** If the Meta MCP server is configured
+  and reports connected (for example in `hermes mcp list`) but none of its
+  tools are visible in this session, say exactly that, point the user to
+  SETUP.md's verification step (a fresh session, or a tool-schema reload),
+  and stop. Do not improvise a terminal workaround for anything that would
+  write to Meta. Reads are a different matter: if the Meta Ads CLI is
+  independently configured (Route B, detection step 2 passes), reporting
+  through it is fine; say you switched and why.
+- **The workspace root, from the setup-state file.** Read
+  `$HERMES_HOME/hermes-ad-agent/setup-state.json` (fallback
+  `~/.hermes/hermes-ad-agent/setup-state.json`) and take `workspace_root`
+  (absolute). If it is missing, stop and route the user to SETUP.md rather
+  than guessing where BRAND.md lives. Run every CLI command from that
+  directory so `.env` is picked up.
+- **Auth check and token expiry.** Before the first insights read, run the
+  connection check (`ads_get_ad_accounts` on the MCP, or
+  `meta auth status` plus `meta ads adaccount list --output json` on the
+  CLI) and confirm the BRAND.md account appears by ID. Read the line
+  `Meta token expires: YYYY-MM-DD` under "## Meta Assets" (the pack's
+  read-only doctor, `python3 scripts/onboarding_doctor.py
+  --meta-token-check` from the workspace root, is the second source; it
+  never prints the token); if the date is within 7 days or past, open the
+  report with that warning. If the check
+  fails (an auth error, a 401, "Server returned an error response" on the
+  listing, or the account absent), stop and report: the exact error, the
+  expiry date on record, and the renewal steps (a new user token with the
+  seven scopes, exchanged for a long-lived token, stored in the managed
+  app environment or the file `hermes config env-path` names, app
+  restarted, `hermes mcp test` for the Meta server, then the date updated
+  in BRAND.md via brand-setup; SETUP.md Step 4). Never regenerate a token
+  yourself and never present an empty result as a report.
+- **BRAND.md** at the workspace root. Read the target CPA or target ROAS
+  from its "## Performance Targets" section; the conversion event, ad
+  account (name and ID), and related IDs from "## Meta Assets"; and the
+  daily spend cap from "## Budget Guardrails". If the file is missing,
+  offer to run the `brand-setup` skill. If the file exists but
+  "## Performance Targets" is empty or all `(not set)`, offer to run
+  brand-setup's update flow right now to fill in a target CPA or ROAS; you
+  can still report raw numbers without it, but say the comparison-to-goal
+  section is unavailable.
 - **Account memory (optional).** If `memory/accounts/act_<ACCOUNT_ID>.md`
   exists at the workspace root for the account (the `account-audit` skill
   writes it), read it for the account's audited 90-day baselines and note
@@ -135,12 +183,16 @@ YYYY-MM-DD` (always together) replaces the preset for a custom range;
 
 ### 1. Scope the question
 
-Pin down four things before pulling data:
+Run the auth check from Prerequisites first (connection, account by ID,
+expiry date); nothing below happens until it passes. Then pin down four
+things before pulling data:
 
-- **Account:** from BRAND.md, or `ads_get_ad_accounts` (MCP) or
-  `meta ads adaccount list --output json` (CLI) if ambiguous. On the CLI,
-  the `AD_ACCOUNT_ID` in the workspace `.env` must be that account, or pass
-  `--ad-account-id` on each command.
+- **Account:** from BRAND.md, by name and ID, confirmed against the
+  listing the auth check returned (`ads_get_ad_accounts` on the MCP,
+  `meta ads adaccount list --output json` on the CLI). When two accounts
+  share a name, the ID decides. On the CLI, the `AD_ACCOUNT_ID` in the
+  workspace `.env` must be that account, or pass `--ad-account-id` on each
+  command.
 - **Window:** what the user asked for ("last 30 days", "this week",
   "yesterday"). Default to the last 7 days when unstated, and say so. On the
   CLI, map the window to a `--date-preset` (`yesterday`, `last_7d`,
@@ -203,6 +255,18 @@ looks like this:
 Spend comes back in the ad account's currency on both backends. Keep that
 separate from budgets: any budget change you later recommend is set on the
 CLI in minor units (5000 is 50.00), so state the human amount in the report.
+
+An insights call that returns no rows, an empty error string, or "Server
+returned an error response" is not a quiet window until you have
+distinguished the cases: re-run the connection check; if it now fails, this
+is an auth failure (Prerequisites); if it passes and the entity listing
+shows ACTIVE ads in the window, report the insights failure as a tool
+failure; only when the check passes and no ads delivered is "no spend in
+the window" the honest line. Note the MCP interop defect observed with
+some SDK versions (a request rejected over its `_meta` field, surfaced only
+as "Server returned an error response"): it is not a credential problem,
+so do not regenerate tokens or patch Hermes; use the CLI for reads if it
+is configured, or wait for the upstream fix, and say which.
 
 When comparing two windows (for example this week versus last week), compare
 efficiency metrics (CPA, ROAS, CTR), and never present volume totals from
@@ -285,7 +349,11 @@ number 2":
   rebuild or edit the creative, then relaunch PAUSED."
 
 If the user confirms an action, hand off to the right skill; do not perform
-mutations from inside this skill.
+mutations from inside this skill. The acting skill writes only through the
+Meta MCP or the Meta Ads CLI; if neither can perform the action in this
+session (the MCP tools not agent-usable, the CLI not configured), the
+answer is "blocked until the backend is usable", never an improvised
+Graph API call or a hand-built request.
 
 After delivering the report, when the account memory file exists and the
 window's results have shifted materially from its baselines (or the audit
@@ -308,3 +376,9 @@ file. Never edit the memory file from inside this skill.
 - On the CLI, a section that depends on an MCP-only tool (anomalies,
   advertiser context, benchmarks, opportunity score) is reported as
   unavailable, not silently skipped.
+- Do not report before the connection check; a report that opens with
+  zeros and no auth line is the failure mode this skill exists to avoid.
+- Do not read `hermes mcp list` saying "enabled" as health; it is config
+  state. Agent-usable means the registered tool is in your list and a
+  read-only call returned data.
+- Do not pick an account by display name; identical names are common.

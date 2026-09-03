@@ -9,13 +9,17 @@ You are running a research-only competitor workflow for the Hermes Ad Agent. Ad 
 
 The output is one file: `research/BRIEF-<date>.md` at the workspace root (the repo clone directory recorded during setup), for example `research/BRIEF-2026-08-24.md`. It contains the competitor landscape, their running ads with ad archive links, a scored opportunity ranking, and 3 to 5 concrete creative briefs the user can hand directly to this suite's image ad and video ad skills.
 
+**Resolve the workspace root from the setup-state file before touching `research/`.** Read `$HERMES_HOME/hermes-ad-agent/setup-state.json` (fallback `~/.hermes/hermes-ad-agent/setup-state.json`; on Hostinger managed Hermes `HERMES_HOME` is `/data`) and take its `workspace_root`, an absolute path. Do not assume the current directory is the workspace and do not rely on a path mentioned earlier in the conversation: fresh sessions and cron jobs have neither. If the file is missing or `workspace_root` does not exist on disk, ask the user for the path and suggest re-running setup so the next session can find it; do not write the brief somewhere else "for now". `research/` is gitignored user data (it carries competitor names, page IDs, and copied ad text); it is never committed to the pack's repo and the brief must not be pasted into any file that is.
+
+**Tool naming.** `ads_library_search` is the server-native tool ID Meta's MCP advertises. The Hermes runtime registers callable names with a server prefix, so in a live session the tool you call is typically `mcp__meta_ads__ads_library_search` (the middle segment is the server name from `hermes mcp list`, `meta_ads` by convention in this pack). Discover the registered name with `tool_search` (or by inspecting your live tool list) before the first call and use that name; bare names in this document identify the tool, they are not the callable string. Tool counts on the Meta server drift between days, so check that this capability is present rather than counting tools.
+
 Read `references/methodology.md` in this skill folder before your first run. It holds the data contract, the page-resolution policy, the full 100-point score formula, the analysis taxonomy, and the brief template. This file tells you what to do; that file tells you how to judge.
 
 ## Requirements
 
-- **Meta Ads MCP connected.** The official server (`https://mcp.facebook.com/ads`) must be configured and logged in. If `ads_library_search` is not in your available tool list, check whether the install is on the CLI route: run `meta auth status` in the terminal. If it reports a token, tell the user plainly that Ad Library search needs the MCP route (SETUP.md Step 4, Route A; docs/meta-mcp.md has the connection steps for humans who want the full picture) and offer the fallback below instead of stopping cold. If neither backend responds, Meta is not connected yet: walk the user through SETUP.md Step 4 (either route) and stop until one is connected.
+- **Meta Ads MCP connected.** The official server (`https://mcp.facebook.com/ads`) must be configured and authenticated (OAuth or a user access token, per SETUP.md Step 4). If no registered tool ending in `ads_library_search` (typically `mcp__meta_ads__ads_library_search`) is in your available tool list after a `tool_search`, check whether the install is on the CLI route: run `meta auth status` in the terminal. If it reports a token, tell the user plainly that Ad Library search needs the MCP route (SETUP.md Step 4, Route A; docs/meta-mcp.md has the connection steps for humans who want the full picture) and offer the fallback below instead of stopping cold. If neither backend responds, Meta is not connected yet: walk the user through SETUP.md Step 4 (either route) and stop until one is connected.
 - **An active ad account.** Meta only serves `ads_library_search` to users with at least one active ad account on the connected Business account. If the tool returns an access error, report that requirement plainly; do not retry in a loop.
-- **BRAND.md.** Read `BRAND.md` from the workspace root first. It carries the user's offer, audience, tone, markets, and usually a competitor list. If it is missing, offer to run the brand-setup skill before continuing. You can proceed without it if the user insists, but say clearly that adaptation-fit judgments will be weaker.
+- **BRAND.md.** Read `BRAND.md` from the workspace root (resolved from the setup-state file above) first. It carries the user's offer, audience, tone, markets, and usually a competitor list. If it is missing, offer to run the brand-setup skill before continuing. You can proceed without it if the user insists, but say clearly that adaptation-fit judgments will be weaker.
 
 ## If only the Meta Ads CLI is connected (fallback)
 
@@ -42,7 +46,7 @@ Parameters observed on Meta's official Ads MCP (August 2026 session):
 
 At least one of `search_terms`, `page_ids`, or `countries` is required per call.
 
-**Check your live tool list first.** Server versions differ. Before your first call, confirm `ads_library_search` exists in this session and read its live schema; trust the live schema over this table. Some builds expose page-name search or pagination parameters this table does not show; the August 2026 build did not, so treat 50 results per query as the working ceiling and narrow with keywords instead of paging. The server may also require housekeeping fields on every call (a stable `client_conversation_id` and an `advertiser_request` string quoting the user's ask); fill those exactly as the live tool description instructs.
+**Check your live tool list first.** Server versions differ. Before your first call, confirm the registered `ads_library_search` tool exists in this session (find its exact callable name, typically `mcp__meta_ads__ads_library_search`, with `tool_search`) and read its live schema; trust the live schema over this table. Some builds expose page-name search or pagination parameters this table does not show; the August 2026 build did not, so treat 50 results per query as the working ceiling and narrow with keywords instead of paging. The server may also require housekeeping fields on every call (a stable `client_conversation_id` and an `advertiser_request` string quoting the user's ask); fill those exactly as the live tool description instructs.
 
 ## Procedure
 
@@ -97,7 +101,7 @@ The objective score orders the raw opportunities; brand fit decides which become
 
 ### Step 8: Write the brief
 
-Create the `research/` directory at the workspace root if needed and write `research/BRIEF-<date>.md` using today's date and the exact output contract in `references/methodology.md`. Required sections: run summary and coverage, competitor landscape table, ranked opportunities with score breakdowns and archive links, full copy detail for the top ads, and 3 to 5 creative briefs.
+Create the `research/` directory at the workspace root (the `workspace_root` from the setup-state file, never the current directory by assumption) if needed and write `research/BRIEF-<date>.md` using today's date and the exact output contract in `references/methodology.md`. The directory is gitignored user data; do not stage or commit it. Required sections: run summary and coverage, competitor landscape table, ranked opportunities with score breakdowns and archive links, full copy detail for the top ads, and 3 to 5 creative briefs.
 
 Each creative brief must be concrete enough to hand to a generation skill without re-reading the research: working title, source ad archive link(s), angle and hook, target format (static image, UGC talking head, or short video), a drafted hook line and copy direction in the brand's voice, visual direction, an explicit "replace" list (competitor branding, people, claims, product shots), and which skill in this suite should produce it (the image ad skill for statics, the video ad skill for motion). Write all suggested ad copy without em-dashes. Never carry a competitor's outcome claim into a brief unless the user can substantiate their own equivalent.
 
@@ -107,7 +111,9 @@ Present the brief to the user, restate the longevity disclaimer once, and ask wh
 
 ## Pitfalls
 
-- **Access error on the first call.** Usually means the connected Meta login has no active ad account, or the OAuth session lapsed, or the install is on the CLI route and the tool is missing (see the fallback section). Explain, suggest re-running the Meta MCP login (see SETUP.md / docs/meta-mcp.md for the reconnect steps), and stop unless the user takes the fallback.
+- **Access error on the first call.** Usually means the connected Meta login has no active ad account, or the token or OAuth session lapsed (user access tokens expire; the setup records the expiry date), or the install is on the CLI route and the tool is missing (see the fallback section). Explain, suggest re-running the Meta MCP connection steps (SETUP.md / docs/meta-mcp.md), and stop unless the user takes the fallback.
+- **"Server returned an error response" on every call.** If the MCP is configured and authenticated but each call fails with a generic server error, this may be the known Hermes/MCP SDK interop defect with Meta's server (the SDK sends an empty `_meta` object and Meta rejects it with a JSON-RPC -32602 "meta ... must be a dict or null" error, visible in the gateway logs). It is not a credential problem: do not regenerate tokens and do not patch Hermes; tell the user, point at the setup docs' known-blocker note, and offer the fallback below.
+- **Calling the bare name.** `ads_library_search` alone will not resolve; the callable is the registered name (typically `mcp__meta_ads__ads_library_search`). Find it with `tool_search` rather than guessing.
 - **The 50-result ceiling.** Big advertisers run hundreds of ads. Say openly that the pull is a sample, prioritize `ACTIVE` ads, and slice further with `search_terms` per product line if the user wants depth.
 - **Prolific lookalike pages.** Dropshippers clone brand names constantly. This is exactly why Step 3 refuses fuzzy matches.
 - **Snapshot URLs are not deliverables.** They can expire or require login. The durable public reference is the `facebook.com/ads/library/?id=` archive link; always include it.
@@ -118,7 +124,7 @@ Present the brief to the user, restate the longevity disclaimer once, and ask wh
 
 Before telling the user you are done, confirm all of these against the written file:
 
-1. `research/BRIEF-<date>.md` exists at the workspace root and today's date is in the filename.
+1. `research/BRIEF-<date>.md` exists under the `workspace_root` recorded in the setup-state file and today's date is in the filename; nothing from `research/` was staged for commit.
 2. Every listed ad has an Ad Library archive link and a score with visible components.
 3. No performance numbers appear anywhere except fields the MCP actually returned, and the longevity disclaimer appears in the brief.
 4. Every visual claim is either backed by a creative you viewed or labeled unverified.

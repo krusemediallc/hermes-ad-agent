@@ -2,7 +2,7 @@
 
 This guide matches the video chapter by chapter. Each chapter tells you the goal, exactly what to say to Hermes (copy-paste the prompts), and what success looks like before you move on.
 
-A note before you start: Hermes will never spend money without asking you first. Every ad it builds on Meta is created **paused**, and every Arcads generation comes with a credit estimate you have to approve. If it ever seems to skip that, stop and say "do not spend anything without asking me."
+A note before you start: Hermes will never spend money without asking you first. Every ad it builds on Meta is created **paused**, and every Arcads generation comes with a cost you approve first: the rate from your Arcads plan, or, if the rate is unknown, a maximum number of credits you set for one calibration run. Retries and quality fixes cost credits too, so Hermes asks before those as well. If it ever seems to skip that, stop and say "do not spend anything without asking me."
 
 ---
 
@@ -43,19 +43,28 @@ You can run research, creatives, and copy against the demo brand, then run `/bra
 
 ## Chapter 3: Connect Meta (MCP or CLI)
 
-**Goal:** Hermes can see and manage your ad accounts. There are two routes and you only need one. Route A is Meta's official Ads MCP server: no developer app, no tokens, just a Meta Business login. Route B is the Meta Ads CLI (Meta's official command-line tool for the Marketing API), authenticated with a system user token, for Hermes builds where the MCP will not connect.
+**Goal:** Hermes can see and manage your ad accounts. There are two routes and you only need one. Route A is Meta's official Ads MCP server, the wider tool surface. Route B is the Meta Ads CLI (Meta's official command-line tool for the Marketing API), authenticated with a system user token, for when the MCP will not connect on your build or when an MCP operation is missing.
+
+Both routes need a token you create once. Neither is "just log in with Facebook": the hosted MCP does not accept a generic OAuth login from a headless server, and it does not accept the CLI's system user token either. That is fine; it is about ten minutes of clicking, and Hermes tells you exactly where.
 
 ### Route A: the Meta Ads MCP
 
 If the guided setup hasn't done it already, say:
 
-> Connect Meta's official Ads MCP server and walk me through the login.
+> Connect Meta's official Ads MCP server. Walk me through creating the user access token it needs, and don't ask me to paste it into this chat.
 
-Hermes adds `https://mcp.facebook.com/ads` to its MCP config and starts an OAuth login. You'll get a browser link: sign in with your **Meta Business account** and approve which ad accounts Hermes may access. Only approve the accounts you actually want it working in.
+On Hostinger, the working path is a **Meta user access token** carrying seven scopes (`ads_mcp_management`, `ads_read`, `ads_management`, `catalog_management`, `business_management`, `pages_show_list`, `instagram_basic`). Hermes points you to Meta for Developers: you generate the token in the Graph API Explorer with your own Meta app, exchange it right away for a long-lived token (about 60 days), and store it as a managed secret (Hostinger's environment settings for the Hermes app, or the env file Hermes names). The MCP config only ever references the variable name, never the token itself. Then you restart the app so it picks up the secret.
 
-**Success looks like:** Hermes lists your ad accounts by name. Verify with:
+Two things to know up front:
 
-> List the ad accounts you can see and tell me which pages are connected to the first one.
+- Meta gives no refresh token for this route, so the token expires in roughly 60 days and renewal is manual. Hermes records the expiry date and you should set a calendar reminder a week ahead. Reporting jobs check it and will shout, not go quiet, if it lapses.
+- The browser OAuth route only works if you own a pre-registered Meta app and the surface you use supports its exact callback. Most Hostinger installs will not; that is why the token route is the default here.
+
+**Success looks like:** Hermes lists your ad accounts **with their IDs** and tells you the token's expiry date, and it does that from a fresh conversation, not just the one where you set it up. A browser login screen is not success. Verify with:
+
+> Start fresh: list the ad accounts you can see, with IDs, tell me which pages are connected to the first one, and tell me when the Meta token expires.
+
+Pick the account you want Hermes working in by name **and** ID (two accounts can share a name).
 
 ### Route B: the Meta Ads CLI
 
@@ -69,7 +78,7 @@ Hermes installs the `meta-ads` package (it needs Python 3.12 or later), then tel
 
 > List the ad accounts and pages the Meta Ads CLI can see.
 
-One note on the two routes: competitor research (the Meta Ad Library) needs Route A; everything else in this guide works on both.
+One note on the two routes: competitor research (the Meta Ad Library) needs Route A; everything else in this guide works on both. A few build operations go the other way: uploading a local file and building one ad that carries all five primary texts and five headlines currently need Route B, so if you can, set up both. Hermes tells you before it builds anything if the route you connected cannot do what you asked.
 
 ### Teach Hermes your account history
 
@@ -117,9 +126,9 @@ Say:
 
 > Make me 3 image ad concepts for my brand. Use my BRAND.md. Show me the concepts and the estimated Arcads credit cost before you generate anything.
 
-Hermes proposes concepts, estimates credits, and waits for your go-ahead. Reply with which concepts you want (for example "run 1 and 3"), and it generates, quality-checks the images, and shows you the results.
+Hermes proposes concepts, tells you the cost (your plan rate, or asks you for a maximum if the rate is unknown), and waits for your go-ahead. Reply with which concepts you want (for example "run 1 and 3"), and it generates, quality-checks the images, and shows you the results.
 
-**Success looks like:** you have ad images saved in your workspace, you approved a credit estimate before anything was generated, and any weird generations (garbled text, extra fingers) got caught and regenerated automatically.
+**Success looks like:** you have ad images saved in your workspace, you approved the cost before anything was generated, and any weird generations (garbled text, extra fingers) got flagged in QA, with Hermes asking you before regenerating anything, since a regeneration costs credits too.
 
 ---
 
@@ -135,7 +144,7 @@ For product b-roll, say:
 
 > Make me a 10 second product video ad for [your product]. Vertical, for Instagram Reels. Show me the plan and credit estimate first.
 
-Two approval gates here, and that's by design: you approve the **spoken script word for word** (if anyone talks in the video) and you approve the **credit estimate**, both before generation starts. Video takes a few minutes to render; Hermes polls until it's done.
+Two approval gates here, and that's by design: you approve the **spoken script word for word** (if anyone talks in the video) and you approve the **cost** (your plan rate, or a maximum you set when the rate is unknown), both before generation starts. Video takes a few minutes to render; Hermes polls until it's done.
 
 **Success looks like:** a finished vertical video in your workspace that matches the script you approved.
 
@@ -165,13 +174,21 @@ Say:
 
 > Launch these: create a new campaign with one ad set and the 3 ads we made (image ads plus the copy from earlier). [Your objective, audience, and daily budget here.] Create everything paused and show me previews before I turn anything on.
 
-Hermes uploads the creatives, builds the campaign, ad set, and ads through Meta (MCP or CLI). On the MCP route it hands you preview links; on the CLI route there are no previews, so you review the paused ads in Ads Manager by name. Everything sits **paused**. One requirement: the ads need a real destination URL. If you've been testing in demo mode, the demo BRAND.md's placeholder (example.com) landing page won't fly; the launcher checks for placeholder URLs and will ask you for a real one before it creates anything, because Meta rejects example.com links. When you've reviewed the previews (or the paused ads in Ads Manager) and you're ready to spend:
+Before anything is created, Hermes shows you the whole plan and waits:
+
+- **The copy pool, verbatim.** Every primary text, headline, description, the call to action, the destination URL, and which media each one pairs with, printed in full, with any validator warnings (length, placeholder URL, missing field). You approve that exact text. Hermes fingerprints what you approved, so if a single word changes afterward it has to ask again. "Get these built" before you have seen the pool is not an approval, and Hermes will not treat it as one.
+- **One ad unit per creative, not one ad per line.** The five primary texts, five headlines, and three descriptions all go inside a single flexible ad on each image or video. Hermes never fans them out into five ads and never quietly drops to one variant. If the Meta route you connected cannot build that unit (the MCP currently cannot), it stops before creating anything and asks whether to build that creative through the Meta Ads CLI or to explicitly accept a single variant.
+- **The video cover is a frame from the video.** Meta's preferred thumbnail, or a frame you pick. Never another ad's image. Hermes reads it back after processing and looks at the preview before it tells you the ad is done.
+
+Then Hermes uploads the creatives, builds the campaign, ad set, and ads through Meta (MCP or CLI), writing every returned ID to a run ledger as it goes. On the MCP route it hands you preview links; on the CLI route there are no previews, so you review the paused ads in Ads Manager by name. Everything is read back and confirmed **PAUSED** before Hermes reports success. One requirement: the ads need a real destination URL. If you've been testing in demo mode, the demo BRAND.md's placeholder (example.com) landing page won't fly; the launcher checks for placeholder URLs and will ask you for a real one before it creates anything, because Meta rejects example.com links. When you've reviewed the previews (or the paused ads in Ads Manager) and you're ready to spend:
 
 > The previews look good. Activate the campaign.
 
 Hermes will confirm the spend implication once more, then activate.
 
-**Success looks like:** the campaign appears in your Ads Manager exactly as described, paused until the moment you explicitly said go. Nothing was activated and no budget moved without your say-so.
+**If the Hostinger web chat says "Session expired, reload the page":** that message comes from the web UI's cookie rotation, not from your conversation ending. Refresh the page once. Do not resend the build request; the run ledger and its run key mean a repeated request is caught rather than built twice, but the safest move is still to ask "where did the launch get to?" and let Hermes read its ledger back.
+
+**Success looks like:** the campaign appears in your Ads Manager exactly as described, each ad carrying the full copy pool you approved, paused until the moment you explicitly said go. Nothing was activated and no budget moved without your say-so.
 
 ---
 

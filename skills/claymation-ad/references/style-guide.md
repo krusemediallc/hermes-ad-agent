@@ -113,7 +113,7 @@ One-shot text-to-video is the wrong choice for this style: identity drifts and t
 - The narrator refers to the character by name ("Diane noticed her reflection had opinions").
 - Character dialogue is sparse: at most one short casual line per character, never marketing copy. Often the supporting character makes the observation, for example: "You look different. What is that?" Render character lines as separate TTS calls with their own `voiceId` and place them at the right beat during assembly.
 - **No dead space.** The voiceover must fill the clip it plays over; dead air kills retention. Per beat, either trim the clip to `vo_duration + 0.5s` (default) or extend the VO by a few words when the visual needs the time (a camera move, the transformation montage, the CTA hold). About a quarter second of lead and a quarter second of tail is the allowed micro-buffer.
-- If the VO runs longer than the clip, never speed it up. Split the line across two beats or regenerate the clip at a longer duration.
+- If the VO runs longer than the clip, never speed it up. Split the line across two beats or regenerate the clip at a longer duration (a new credit-accounted generation; gate it before running it).
 
 ### Per-beat duration from the narrator line (roughly 2.5 words per second)
 

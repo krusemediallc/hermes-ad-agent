@@ -23,12 +23,14 @@ description: >-
 # Account audit
 
 You study one connected Meta ad account for the last 90 days and write what
-you learn to a memory file at the workspace root (the repo clone directory
-recorded during setup): `memory/accounts/act_<ACCOUNT_ID>.md`, one file per
-account. That file is the account's institutional memory: every creative,
-copy, and launch skill in this pack consults it before building net-new
-ads, so what you write must be accurate, sourced from the backend, and
-honest about its gaps.
+you learn to a memory file at the workspace root (resolved from the setup
+state file, see Prerequisites): `memory/accounts/act_<ACCOUNT_ID>.md`, one
+file per account. That file is the account's institutional memory: every
+creative, copy, and launch skill in this pack consults it before building
+net-new ads, so what you write must be accurate, sourced from the backend,
+and honest about its gaps. An audit that quietly analyzed nothing is worse
+than no audit: coverage is measured and reported before any conclusion is
+drawn.
 
 During onboarding this skill runs as one of the first steps: immediately
 after the Meta backend is connected and before the brand-setup interview,
@@ -87,6 +89,20 @@ calls from the Backend reference below.
 7. **No Meta account, no audit.** In demo mode, or when no backend is
    connected, skip with a note explaining why and what to do next. Never
    fabricate an audit.
+8. **Coverage before conclusions.** No copy pattern, hook, angle, or
+   creative-format insight is written or spoken until the coverage table
+   (Workflow step 5) shows what fraction of the in-scope creatives were
+   actually returned. Zero or partial coverage is reported as exactly
+   that; "audit complete" is blocked until the coverage thresholds pass or
+   the user explicitly accepts the gap in this conversation. A summary
+   that implies copy coverage it does not have is a fabrication under rule
+   2.
+9. **Large responses are handled, never dumped.** Request only the fields
+   a step needs, page incrementally, and never print a raw payload over
+   about 1 MB into chat, a file, or a job log. Signed media URLs (image
+   and video links with query-string signatures) are opaque values: never
+   place them in terminal arguments, memory files, or snapshot files;
+   store the media ID or hash instead and fetch the URL fresh when needed.
 
 ## Prerequisites
 
@@ -111,11 +127,27 @@ calls from the Backend reference below.
   list over the names in this file, use the closest available equivalent
   when a documented name is missing, and on the CLI trust `--help` output
   over the flags written here.
-- **A workspace root.** The memory file is written under the workspace
-  root (the repo clone directory recorded during setup), at
-  `memory/accounts/act_<ACCOUNT_ID>.md`. Create the `memory/accounts/`
-  directories if they do not exist. `memory/` is gitignored; keep it that
-  way.
+
+  **Tool naming.** The names in this file are the server-native IDs the
+  Meta MCP advertises (`ads_get_ad_accounts`, `ads_get_creatives`). The
+  Hermes runtime registers them under a prefixed callable name (observed
+  shape `mcp__meta_ads__ads_get_ad_accounts`, where the middle segment is
+  the server name from your config). Discover the live registered name
+  with your tool search and call that; a bare name that is not in your
+  tool list is not a missing capability until you have searched for the
+  prefixed form. If the server is configured and connected but none of
+  its tools are visible in this session, the state is "connected but not
+  agent-usable": say so, point to SETUP.md, and stop.
+- **A workspace root, from the setup-state file.** Read
+  `$HERMES_HOME/hermes-ad-agent/setup-state.json` (fallback
+  `~/.hermes/hermes-ad-agent/setup-state.json`) and take `workspace_root`
+  from it; it is an absolute path. If the file is missing or the field is
+  empty, stop and route the user to SETUP.md; never infer the root from
+  the conversation or the current directory. The memory file is written
+  under that root at `memory/accounts/act_<ACCOUNT_ID>.md`. Create the
+  `memory/accounts/` directories if they do not exist. `memory/` is
+  gitignored; keep it that way. The setup-state file also carries
+  `meta_backend`; treat it as a hint and still run live detection.
 - **The memory template.** The canonical file structure is
   `${HERMES_SKILL_DIR}/references/memory-template.md`. Read it before
   writing; other skills parse the memory file by its exact H2 heading
@@ -182,7 +214,49 @@ curl -s "https://graph.facebook.com/v25.0/<ENTITY_ID>?fields=<field list from re
 
 Entity IDs come from the list calls in the table; Tier A reads each one by
 ID. The token is read from `.env` inside the command and must never be
-echoed, logged, or pasted into chat, memory files, or job prompts.
+echoed, logged, or pasted into chat, memory files, or job prompts. Tier A
+is GET only; the Graph API is never a write path in this pack.
+
+## Response handling (MCP)
+
+The Meta MCP's responses do not always have the shape a tool description
+implies, and a collector that assumes a key silently collects nothing.
+Apply these rules to every MCP read in this skill:
+
+- **Read the live key shape before collecting.** Inspect the first
+  response of each tool and note the actual top-level keys of
+  `structuredContent` (and of the text content when `structuredContent`
+  is absent). Observed on one server version: `ads_get_creatives`
+  returned its records under `ad_creatives`, not `creatives`, and
+  `ads_get_ad_entities` returned `ad_entities`. Keys drift between server
+  versions, so read them each session; never hard-code one from this
+  file. Record the keys you used in "## Audit Metadata".
+- **Normalize stringified JSON.** `structuredContent` values are sometimes
+  JSON-encoded strings rather than objects (an `ad_entities` string, or
+  an error field holding the text `"[]"`). Before reading a field, if the
+  value is a string that starts with `[` or `{`, parse it; treat a parsed
+  empty array as zero records, not as success.
+- **Paginate and batch by the documented limits.** Use the tool's paging
+  parameters (cursor, offset, or page size as its live schema names them)
+  and request creatives in batches of IDs sized to the schema's stated
+  maximum (verify with the tool's live description; if it states none,
+  start at 25 and stay there). Continue until the paging cursor is
+  exhausted, and record how many pages you pulled.
+- **Retry only the failed batch.** When one batch fails (a transport
+  error, an empty error string, a decode error), retry that batch once
+  after a short pause, then mark those IDs `inaccessible` and move on.
+  Never restart the whole collection and never re-request batches that
+  already returned records.
+- **Large payloads.** Field-minimize every request (pass the `fields`
+  parameter where the schema offers it). If a response fails to decode
+  (Brotli or similar decode errors have been observed on large creative
+  reads), shrink the batch and retry that batch; where you control the
+  HTTP client (Tier A only), send `Accept-Encoding: identity`. Never print
+  a raw payload over about 1 MB anywhere; write records to the snapshot
+  files incrementally instead.
+- **Redact before printing.** Anything you show in chat is a field-minimized
+  excerpt: names, IDs, copy, and numbers, never raw objects with signed
+  URLs, tokens, or user identifiers.
 
 ## Workflow
 
@@ -196,8 +270,13 @@ using, and record it later in "## Audit Metadata" as `mcp` or `cli`.
 Enumerate ad accounts over the live backend (`ads_get_ad_accounts` on the
 MCP; `meta ads adaccount list --output json` on the CLI, where
 `meta ads adaccount current` shows the configured default). Show the user
-the list with names and IDs and confirm which account to audit; never
-assume. If the user wants several accounts audited, run this whole
+the list with names AND IDs and confirm which account to audit by both;
+never assume, and never select by display name alone. Businesses often
+hold several accounts with identical names, so when two rows share a
+name, show the IDs side by side and ask the user to pick by ID, then
+restate "auditing <name> (<act_ID>)" before the first read. If BRAND.md
+exists, compare the pick against its "## Meta Assets" account ID and flag
+a mismatch. If the user wants several accounts audited, run this whole
 workflow once per account, one file each. Then create
 `memory/accounts/act_<ACCOUNT_ID>.md` from the template and write
 "## Audit Metadata" and the start of "## Account Snapshot" (name, ID,
@@ -238,6 +317,23 @@ billing events:
   read did not return (a missing key is a platform default, never an
   opt-out). On Tier C this summary cannot be produced; write "not readable
   on this tier" and point to Data Gaps.
+- **Publishing identities, cross-checked.** Record the Facebook Page and
+  the Instagram identity the account actually publishes under, from
+  three sources, and say which agreed: (1) the Page list
+  (`ads_get_ad_account_pages` / `ads_get_user_pages` on the MCP,
+  `meta ads page list --output json` on the CLI); (2) the Instagram
+  listing (`ads_get_ig_accounts` on the MCP; none on the CLI); (3) the
+  effective Instagram fields on historical creatives
+  (`object_story_spec.instagram_actor_id`, `instagram_user_id`,
+  `effective_instagram_media_id`, `effective_instagram_story_id`, or
+  whichever of these the read returns). An empty `ads_get_ig_accounts`
+  result is not proof that no Instagram identity exists: the listing
+  depends on the token's scopes and the Page linkage, and accounts have
+  run Instagram placements for months with that list empty. When (2) is
+  empty but (3) names an identity, record the identity from (3) as
+  "observed on creatives, not listed by the IG tool" so the launcher can
+  reuse it; when all three are empty, record "no Instagram identity
+  observed" and note it in Data Gaps.
 
 ### 4. Capture rebuild specs
 
@@ -310,15 +406,66 @@ entity counts per file, normalizations applied, the per-creative
 enhancement enrollment summary for the top creatives, and the fields
 unavailable on this tier.
 
-### 5. Inventory the creative and copy
+### 5. Inventory the creative and copy (coverage first)
 
-Pull the creatives behind the ads in scope (`ads_get_creatives` /
-`ads_get_creative_ads` on the MCP, plus `ads_get_ad_images` and
-`ads_get_ad_videos` for the media mix; `meta ads creative list` and
-`meta ads creative get <ID>` on the CLI). Record the format mix (image,
-video, carousel, dynamic), the hooks and angles in use, and for the
-running ads the primary texts, headlines, descriptions, CTAs, and
-destination URLs, verbatim. Write "## Creative and Copy Inventory".
+This step is fail-closed. It has three parts in a fixed order: collect,
+measure coverage, and only then analyze.
+
+**5a. Collect.** Build the list of creative IDs referenced by the ads in
+scope (each ad's `creative.id`, or `creative_id` on the MCP), de-duplicate
+it, and record the count as `requested`. Pull those creatives
+(`ads_get_creatives` with the ID batches, `ads_get_creative_ads` where you
+need the reverse mapping, plus `ads_get_ad_images` and `ads_get_ad_videos`
+for the media mix on the MCP; `meta ads creative list` and
+`meta ads creative get <ID>` on the CLI), following every rule in
+"Response handling": read the live key shape first (observed:
+`ad_creatives`), normalize stringified JSON, batch by the documented
+limit, retry only failed batches. Write each record to
+`specs/creatives.jsonl` as it arrives.
+
+**5b. Measure coverage.** Before reading a single line of copy, produce
+this table in chat and write it into "## Creative and Copy Inventory" as
+its first block:
+
+| Count | Meaning |
+|---|---|
+| requested | distinct creative IDs referenced by in-scope ads |
+| returned | records actually received with a matching ID |
+| missing | requested IDs absent from every response with no error |
+| inaccessible | IDs whose batch errored after the retry, or that the backend reported as unreadable |
+| duplicate | IDs returned more than once (paging overlap), counted once in `returned` |
+
+`requested` must equal `returned + missing + inaccessible`; if it does
+not, your collector is reading the wrong key, so go back to 5a. Then
+apply the thresholds:
+
+- **Returned is zero:** write "coverage: 0 of <requested>; no copy or
+  creative analysis possible" in the section, list the likely cause (a
+  key-shape mismatch is the first suspect, then scopes, then the tier),
+  and skip 5c entirely. The section contains the table and nothing else.
+- **Returned is below 90 percent of requested** (default threshold; the
+  user may set another and you record it): 5c may proceed on the returned
+  records only, every finding in the section is prefixed "partial
+  coverage (<returned>/<requested>)", and "audit complete" is blocked
+  (step 9) until the user explicitly accepts the gap or a rerun raises
+  coverage.
+- **Returned is at or above the threshold:** proceed to 5c; still list
+  the missing and inaccessible IDs in "## Data Gaps".
+
+Write the same figures into "## Audit Metadata" (`creative coverage:
+<returned>/<requested>, missing <n>, inaccessible <n>, duplicate <n>,
+threshold <pct>, accepted-by-user: yes|no`).
+
+**5c. Analyze.** Only now record the format mix (image, video, carousel,
+dynamic), the hooks and angles in use, and for the running ads the
+primary texts, headlines, descriptions, CTAs, and destination URLs,
+verbatim, each tied to its creative ID. Multi-variant creatives
+(`asset_feed_spec` with several `bodies`, `titles`, or `descriptions`)
+are one creative with every variant listed under it, never split into
+several ads. Every sentence of pattern analysis ("winners open with a
+question", "the account leans on UGC video") must be traceable to
+specific returned creative IDs; a claim with no traceable records is
+removed, not softened.
 
 ### 6. Pull 90 days of performance
 
@@ -376,17 +523,28 @@ plus any caps applied) and a dated "## Changelog" entry, and complete
 
 ### 9. Read the summary back
 
-Give the user a short plain-language summary: account, window, backend,
-90-day spend, what is running, the top 2 to 3 performers with their
-numbers, the biggest learnings, the rebuild-spec tier used (and, on Tier
-C, that the Route B token would upgrade it), and the file path where the
-full memory now lives. Do not paste the whole file or the snapshot files
-into chat.
+Give the user a short plain-language summary: account (name and ID),
+window, backend, 90-day spend, what is running, the creative coverage
+line from step 5b (`<returned>/<requested>` creatives read, with missing
+and inaccessible counts), the top 2 to 3 performers with their numbers,
+the biggest learnings, the rebuild-spec tier used (and, on Tier C, that
+the Route B token would upgrade it), and the file path where the full
+memory now lives. Do not paste the whole file or the snapshot files into
+chat.
+
+**Completion label.** Say "audit complete" only when the coverage
+threshold passed and every section was written from returned data. When
+coverage failed the threshold and the user has not accepted the gap, or
+when a whole section is a data gap, label the result "audit PARTIAL" and
+name the gap in one line. A partial audit still writes its file and is
+still useful; it is the label that must be honest, because
+`brand-setup` and the creative skills read this file trusting it.
 
 ### 10. Note it in Hermes memory
 
-Hermes keeps a small personal notes file, `~/.hermes/memories/MEMORY.md`
-("My Notes" in the dashboard, cap 2,200 characters), that is injected into
+Hermes keeps a small personal notes file, `$HERMES_HOME/memories/MEMORY.md`
+(`~/.hermes/memories/MEMORY.md` when `HERMES_HOME` is unset; "My Notes"
+in the dashboard, cap 2,200 characters), that is injected into
 every session's system prompt. Leave one pointer there so the next session
 knows the account memory exists without opening the workspace. Use the
 built-in `memory` tool, notes target, one entry under 250 characters that
@@ -413,9 +571,10 @@ Rules for this entry:
   this entry rather than trimming someone else's.
 - The file is loaded as a frozen snapshot at session start, so the entry
   is visible from the next session on. If `memory.write_approval` is true
-  in `~/.hermes/config.yaml`, the write waits in `/memory` as pending until
-  the user runs `/memory approve`; tell them. If `memory.memory_enabled` is
-  false, skip the write and say so in one line.
+  in the Hermes config (`hermes config path` prints its location), the
+  write waits in `/memory` as pending until the user runs
+  `/memory approve`; tell them. If `memory.memory_enabled` is false, skip
+  the write and say so in one line.
 
 ### 11. Offer a refresh
 
@@ -431,9 +590,13 @@ from step 10 with the new tier and date.
 
 - **brand-setup** (which runs next during onboarding) reads the file to
   pre-fill discovered facts: the ad account, pixels and conversion events
-  in use, the dominant objective, and observed budget levels. The user
-  still confirms everything; the audit informs the interview, it does not
-  replace it.
+  in use, the publishing identities from the cross-check, the dominant
+  objective, and observed budget levels. The user still confirms
+  everything; the audit informs the interview, it does not replace it.
+- **Every consumer reads the coverage line first.** A section written
+  under partial coverage carries its prefix, and a consumer that finds
+  "coverage: 0 of N" treats the copy inventory as absent, not as "the
+  account runs no copy".
 - **The creative and copy skills** (the Arcads image and video skills,
   `human-ad-copy`, and the other ad-generation skills) read
   "## Learnings for New Ads", "## Top Performers", and
@@ -474,3 +637,15 @@ from step 10 with the new tier and date.
 - Do not print, echo, or log the Route B token while checking for it or
   using it in a Tier A command, and never issue anything but GET on that
   tier.
+- Do not assume the response key. A collector that reads
+  `structuredContent.creatives` when the server returns `ad_creatives`
+  collects zero records while the summary implies coverage; the coverage
+  table in step 5b exists to catch exactly that.
+- Do not write copy or creative-pattern findings on zero or partial
+  coverage without the prefix and the blocked completion label.
+- Do not treat an empty `ads_get_ig_accounts` result as "no Instagram";
+  check Pages and the creatives' effective Instagram fields first.
+- Do not pick an ad account by display name; identical names are common.
+  Name and ID, confirmed by the user.
+- Do not put signed media URLs into snapshot files, memory files, or
+  terminal arguments; keep the media ID and fetch the URL when needed.

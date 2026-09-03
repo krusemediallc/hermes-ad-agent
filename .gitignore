@@ -5,11 +5,14 @@
 # Only the root-level BRAND.md is ignored; the demo file in assets/demo-brand/ stays tracked.
 /BRAND.md
 
-# Generated creatives and downloads
+# Generated state carries customer identifiers (ad account, campaign, ad set, ad, creative,
+# and media IDs; account audits; research on named competitors; performance numbers).
+# Every generated artifact below stays local and is never committed.
 outputs/
-
-# Per-account audit memory written by the account-audit skill (user data, never commit)
 memory/
+research/
+ad-runs/
+reports/
 
 # Logs
 *.log

@@ -199,7 +199,7 @@ Before sending a still to Seedance for animation, verify:
 - [ ] Aspect ratio is 9:16
 - [ ] The lower third has clean negative space if this frame will carry a caption
 
-Max 2 retries per beat with a corrected prompt. If the third attempt still fails, stop and ask the user.
+A corrected-prompt retry is a new credit-accounted generation: run it only inside the retry allowance the still batch approval named (never more than 2 per beat), otherwise stop and ask the user. Report each retry's actual `creditsCharged`.
 
 ## When the user already has a brand character
 

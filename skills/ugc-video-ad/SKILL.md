@@ -7,7 +7,16 @@ description: Create UGC style talking-head video ads (a believable person speaki
 
 You are producing a UGC style video ad: a believable, casual person speaking about the user's product straight to camera, like a real creator filmed it on their phone. Everything runs through the Arcads MCP server. There is no key setup, no environment files, and no direct API calls in this skill; the MCP server handles auth, uploads, generation, and polling.
 
-**Tool names note:** the tool names below match the Arcads MCP server as observed in mid 2026. Server versions differ. Before you start, list the tools actually available from the Arcads MCP server in this session and adapt names if they differ. If no Arcads tools are available at all, tell the user the Arcads MCP server is not connected and stop; do not fall back to any other transport.
+**Tool names note:** the bare `arcads_*` names below are the server-native tool IDs the Arcads MCP advertises. The Hermes runtime registers each one under a prefixed callable name (observed shape: `mcp__arcads__arcads_watch_asset`). Before you start, discover the registered name for each tool you need (tool_search or your live tool list) and call that name; never assume the bare name is callable. Server versions differ and tool counts drift day to day, so readiness is "the tools this skill needs are registered", never a tool count. If no Arcads tools are registered at all, tell the user the Arcads MCP server is not connected and stop; do not fall back to any other transport.
+
+## Arcads cost contract (read before any credit gate)
+
+- **Only `creditsCharged` is cost.** Read it back from the asset after the call (`arcads_watch_asset` returns it). Nothing else is cost. Some responses also carry an `mp` field; that is megapixel or usage metadata, never credits. Reading `mp` as credits has understated real cost by hundreds of times.
+- **One account-specific historical observation, not a rate and not an estimate:** a 12-second 720p Seedance 2.0 video charged `creditsCharged: 432` on one account in early September 2026 while its `mp` field read 0.9216. Your account, plan, and model will differ.
+- **Arcads has no quote or billing endpoint.** Ask the user for their plan's rate first. If they do not know it, the first paid generation is an explicit unknown-cost calibration: the approval must state a user-defined maximum acceptable credit exposure for that one operation, you generate exactly one unit, read back `creditsCharged`, log it, and re-gate everything else against the observed number.
+- **Every Arcads operation is credit-accounted**, including ones that return `creditsCharged: 0` under a daily limit: retries, regenerations, QA-fix regenerations, transcription, `arcads_analyze_media`, subtitles, enhancement, stitching, trimming, editing. None of them run automatically. They run only when the approval named them with a count-and-cost allowance (for example "up to 1 retry per clip at or under N credits each"); otherwise ask again before each one.
+- **Log every operation** to `outputs/arcads-usage-log.jsonl` at the workspace root (resolve the root from the setup-state file, never from memory of the conversation): tool, model, duration, resolution, aspectRatio, count (`nbGenerations`), date, every assetId, final status, `creditsCharged` exactly as returned, and a daily-limit indicator (`usedDailyLimit` when the server returns it). Report actual `creditsCharged` per operation to the user, plus any daily-limit use.
+- **Signed `downloadUrl` values are temporary credentials.** Pass them between tools as opaque values. Never paste one into a terminal command line, a log line, the usage log, chat transcripts you save, or any durable file. Download with a fetch step that reads the URL from a variable or stdin rather than a command argument, and save the file under `outputs/ugc-video-ad/<slug>/`.
 
 ## When to use
 
@@ -128,17 +137,20 @@ Loop on edits until approved. Skip this gate only for fully silent clips.
 ### Step 6: Variation count and credit estimate gate (mandatory)
 
 1. Ask how many variations the user wants (default 1, sensible cap 5). Variations go into a single generate call via `nbGenerations` (1 to 10), not repeated calls.
-2. Estimate credits. Arcads exposes no billing endpoint, so: read the shared usage log `outputs/arcads-usage-log.jsonl` at the workspace root (the repo clone directory recorded during setup) for a past run with a matching model and config and use its recorded `creditsCharged`; else use a credit rates note in BRAND.md if one exists; else ask the user what a comparable generation costs them. If the log is empty and the user does not know, run a **calibration batch of 1**: with the user's go-ahead, generate a single variation first, observe the credits actually consumed (`creditsCharged` from the MCP, or have the user check the Arcads dashboard), append that to the usage log, then estimate the remaining variations from the observed number and confirm before generating them. One dated reference point you may cite as possibly stale: a 15s, 720p, image-referenced Seedance 2.0 clip has cost about 0.9 credits.
-3. Present it as an estimate, cite the source, and wait:
+2. Estimate credits, in this order: ask the user what their plan charges for this model, duration, and resolution; else read the shared usage log `outputs/arcads-usage-log.jsonl` at the workspace root for a past run with a matching model and config and use its recorded `creditsCharged`; else a credit rates note in BRAND.md. If none of those exist, the first generation is an **unknown-cost calibration of 1**: the user states a maximum acceptable credit exposure for that single generation, you generate one variation, read back `creditsCharged`, log it, then estimate the remaining variations from the observed number and confirm again before generating them. Never cite a fixed credit figure from this file or memory as an estimate; the only historical datapoint here (432 credits for one 12s 720p Seedance video on one account) is an observation, not a rate.
+3. Present it as an estimate, cite the source, name any allowed follow-up operations with a count and cost, and wait:
 
 ```
-Estimated credit cost:
-  Seedance 2.0 (15s, 720p, 1 reference image) x 2 variations = ~1.8 credits (from generation log)
+Credit gate:
+  Seedance 2.0 (15s, 720p, 1 reference image) x 2 variations
+  Basis: <user's stated plan rate | usage log entry dated ... | unknown, calibration of 1>
+  Estimate: <N> credits total, or "unknown; max exposure you accept for the first generation: ___"
+  Allowed follow-ups: <none | up to 1 QA retry per clip at or under N credits each>
   Estimate only. Confirm exact pricing in the Arcads platform.
   Proceed? (yes / no)
 ```
 
-Do not generate until the user confirms. QA-fix regenerations after this confirmation do not need a new confirmation, but report their extra credits at the end. A fresh variant round later always gets a fresh estimate and confirmation.
+Do not generate until the user confirms. Retries and QA-fix regenerations are separate credit-accounted operations: they happen only if this approval named them with a count-and-cost allowance, otherwise you come back and ask before each one. A fresh variant round later always gets a fresh estimate and confirmation.
 
 ### Step 7: Upload reference files (only if the user supplied media)
 
@@ -178,18 +190,29 @@ arcads_generate_video_seedance_20(
 )
 ```
 
-Immediately after each generate call succeeds, append one line to the shared usage log `outputs/arcads-usage-log.jsonl` at the workspace root (create the folder and file if missing) with model, duration, resolution, aspectRatio, audioEnabled, reference counts, prompt word count, and every returned assetId. Update the entry later with final status and `creditsCharged`. Never log secrets.
+Immediately after each generate call succeeds, append one line to the shared usage log `outputs/arcads-usage-log.jsonl` at the workspace root (create the folder and file if missing) with tool, model, duration, resolution, aspectRatio, audioEnabled, reference counts, count (`nbGenerations`), date, prompt word count, and every returned assetId. Update the entry later with final status, `creditsCharged` exactly as returned, and the daily-limit indicator. Never log secrets or signed URLs.
 
 ### Step 9: Poll
 
-Poll each assetId with `arcads_watch_asset(assetId)` until `status` is `generated` or `failed`. It returns the signed `downloadUrl` in the same call once done. While `pending` there is no URL; wait and re-call on a relaxed cadence (video runs about 7 minutes, occasionally up to 15; TTS about 5 to 10 seconds). If `arcads_get_asset` exists in your tool list, do not rely on it; it is known to drop off intermittently with a `-32602 tool not found` error. On any `-32602`, refresh your MCP tool list and retry once.
+Poll each assetId with `arcads_watch_asset(assetId)` until `status` is `generated` or `failed`. It returns the signed `downloadUrl` and `creditsCharged` in the same call once done. While `pending` there is no URL; wait and re-call on a relaxed cadence (video runs about 7 minutes, occasionally up to 15; TTS about 5 to 10 seconds). If `arcads_get_asset` exists in your tool list, do not rely on it; it is known to drop off intermittently with a `-32602 tool not found` error. On any `-32602`, refresh your MCP tool list and re-issue the same poll (polling is a read; a re-issued generate call is a new charge and needs its own approval).
 
 ### Step 10: Deliver and QA
 
-1. Download each finished video from its signed `downloadUrl` into `outputs/ugc-video-ad/<slug>/` (signed URLs expire, so download promptly).
-2. Watch or spot-check each clip: garbled speech, lip-sync drift, warped hands, a product label that changed between shots. If a clip is clearly broken, regenerate once with a corrected prompt (cap 2 retries per clip) and note the extra credits.
-3. Send the finished files to the user in the current chat if the channel supports media attachments; otherwise share the download URLs and the saved file paths. Number the variations so the user can pick favorites.
-4. Report actual `creditsCharged` totals from the log. Never state numbers the MCP did not return.
+1. Download each finished video from its signed `downloadUrl` into `outputs/ugc-video-ad/<slug>/` (signed URLs expire, so download promptly; keep the URL opaque, per the cost contract above).
+2. Run QA and report each state separately. Never collapse them into one "QA passed":
+
+| State | What clears it |
+|---|---|
+| metadata-pass | Duration, resolution, aspect ratio, and audio track match the approved plan (asset metadata or a local probe). |
+| sampled-frames-pass | Sampled frames show no warped hands, no product or label drift, no invented captions. |
+| transcript-pass | Spoken audio matches the approved dialogue verbatim. Transcription through Arcads (`arcads_analyze_media`) is a credit-accounted operation; run it only if the approval allowed it, otherwise the user listens and confirms. |
+| motion/lip-sync review required | Lip-sync drift, morphing, and rushed delivery can only be judged by watching the clip. Sampled frames plus a transcript never clear this state; the user or you must watch it end to end. |
+| claims/branding check | Every spoken claim traces to BRAND.md or the user's sign-off in this conversation; the product and any wordmark match the reference. |
+| human approval | The user has watched the clip and said yes. |
+
+   A clearly broken clip gets a corrected-prompt regeneration only if the credit approval named a retry allowance for it; otherwise report the defect and ask before regenerating. Never resend the identical prompt.
+3. Send the finished files to the user in the current chat if the channel supports media attachments; otherwise share the saved file paths (and, if the user needs a link, the signed URL as an opaque handoff, not written into any file). Number the variations so the user can pick favorites.
+4. Report actual `creditsCharged` per operation from the log, plus daily-limit use. Never state numbers the MCP did not return.
 
 ### Step 11: Variant loop
 
@@ -217,17 +240,20 @@ Remember the forbidden words for Seedance prompts: cinematic, professional, stun
 |---|---|
 | `File not found` / `REFERENCE_FILE_NOT_FOUND` | Local path did not bridge. Upload via `arcads_get_upload_url` and pass the fresh `filePath` (Step 7). |
 | `INVALID_REFERENCE_IMAGES` | A registered asset id was passed. Reference fields want the uploaded `filePath`. |
-| `-32602 tool not found` | Refresh the MCP tool list and retry once. Poll with `arcads_watch_asset` only. |
-| `status: failed` (content) | Never resend the same prompt. Remove flagged or forbidden words, tighten the action, regenerate. |
-| 422 validation | Check enums: aspect ratio, duration, resolution. Seedance takes no 1:1. |
-| Server error on audio plus image (Seedance) | Historically intermittent. Retry once; if it persists, generate silent image-to-video and add voice via `arcads_audio_driven` or TTS downstream. |
+| `-32602 tool not found` | Refresh the MCP tool list, re-discover the registered name, and re-issue the read call. Poll with `arcads_watch_asset` only. |
+| `status: failed` (content) | Never resend the same prompt. Remove flagged or forbidden words, tighten the action. A failed generation may still have charged credits; the corrected regeneration is a new credit-accounted operation and needs an allowance or a fresh yes. |
+| 422 validation | Check enums: aspect ratio, duration, resolution. Seedance takes no 1:1. Fix the parameters before re-issuing; the re-issue still needs its allowance. |
+| Server error on audio plus image (Seedance) | Historically intermittent. Report it; re-issue only under the approval's retry allowance. If it persists, propose silent image-to-video plus voice via `arcads_audio_driven` or TTS downstream, gated as new operations. |
 | Speech sounds rushed | Add or strengthen the pacing cue in the tone layer and add a silent beat; or extend the duration. |
 
 ## Hard rules, never relax
 
 1. Dialogue confirmation gate before generating any speaking video. Separate from the credit gate.
-2. Credit estimate presented and explicitly confirmed before any generation. Always labeled an estimate.
-3. Claims audited against BRAND.md; unsupported claims flagged, never slipped in.
-4. No em-dashes in ad copy.
-5. Log every generation; report only real numbers the MCP returned.
-6. This skill outputs video files only. Launching to Meta belongs to the Meta launch skill, and anything created there is always paused until a human explicitly activates it.
+2. Credit estimate presented and explicitly confirmed before any generation. Always labeled an estimate. Only `creditsCharged` is cost; `mp` is never credits. Unknown rate means a calibration of 1 with a user-stated maximum exposure.
+3. No automatic paid or credit-accounted operations: retries, regenerations, transcription, analysis, subtitles, enhancement, and editing run only under a named count-and-cost allowance, otherwise ask again.
+4. Claims audited against BRAND.md; unsupported claims flagged, never slipped in.
+5. No em-dashes in ad copy.
+6. Log every operation; report actual `creditsCharged` per operation; never state numbers the MCP did not return.
+7. QA states are reported separately (metadata, sampled frames, transcript, motion/lip-sync review, claims/branding, human approval); never an overall "QA passed" from frames and transcript alone.
+8. Signed URLs stay opaque: never in terminal arguments, logs, or durable files.
+9. This skill outputs video files only. Launching to Meta belongs to the Meta launch skill, and anything created there is always paused until a human explicitly activates it.

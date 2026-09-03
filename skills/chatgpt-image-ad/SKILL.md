@@ -9,9 +9,16 @@ You generate standalone Meta image-ad creatives with **gpt-image-2** through the
 
 ## Before you start
 
-1. **Check your tool list.** The tool names below match the Arcads MCP server as documented, but server versions differ. Confirm each tool actually exists in your current session's tool list before calling it. If a tool is missing or a call returns `-32602 (tool not found)`, reload the MCP connection and check again.
+1. **Check your tool list.** The bare `arcads_*` names below are the server-native tool IDs the Arcads MCP advertises; the Hermes runtime registers each one under a prefixed callable name (observed shape: `mcp__arcads__arcads_watch_asset`). Discover the registered name for each tool you need (tool_search or your live tool list) and call that. Server versions differ and tool counts drift day to day, so readiness is "the tools this skill needs are registered", never a count. If a tool is missing or a call returns `-32602 (tool not found)`, reload the MCP connection, re-discover the name, and check again.
 2. **Read the user's BRAND.md** (created by the brand-setup skill during install) for brand name, colors, product description, and tagline. You will need these to fill prompt placeholders. If BRAND.md is missing, offer to run brand-setup first; the user can also decline and give you brand details inline.
 3. **Arcads account required.** If the Arcads MCP tools are not connected at all, tell the user to connect the Arcads MCP server in their Hermes MCP settings and stop.
+
+## Arcads cost contract (read before the credit gate)
+
+- **Only `creditsCharged` is cost.** Read it back from each asset (`arcads_watch_asset` returns it). Some responses also carry an `mp` field; that is megapixel or usage metadata, never credits. Reading `mp` as credits has understated real cost by hundreds of times on video; treat it the same way on images.
+- **No fixed credit figures.** Arcads has no quote or billing endpoint and this file carries no rate. The only historical datapoint in this pack (a 12-second 720p Seedance video charging 432 credits on one account in early September 2026) is a video observation on one account, not a rate and not relevant to image pricing.
+- **Every Arcads operation is credit-accounted**, including ones that return `creditsCharged: 0` under a daily limit: generations, retries, QA-fix regenerations, `arcads_analyze_media`, any editing tool. None of them run automatically; they run only when the approval named them with a count-and-cost allowance, otherwise ask again before each one.
+- **Signed `downloadUrl` and `presignedUrl` values are temporary credentials.** Pass them between tools as opaque values; never paste one into a terminal command line, a log line, the usage log, or any durable file. Download with a fetch step that reads the URL from a variable or stdin rather than a command argument, and save files under `outputs/chatgpt-image-ad/<slug>/`.
 
 ## Model choice: is this the right skill?
 
@@ -50,7 +57,7 @@ If the brief is ambiguous, check the matching template's Model notes in the shar
 3. **Edge-safe + glyph-safety guards always on.** Keep all text inside the safe central margin.
 4. **Max 5 reference images.**
 5. **Comparison-table and two-column prompts must specify BOTH columns' values.** If you only give one set, gpt-image-2 duplicates it into both columns (confirmed failure). State the competitor values AND the brand values explicitly.
-6. **Credit estimate + confirmation before every generation** (Phase 3). Never report numbers the MCP did not return.
+6. **Credit estimate + confirmation before every generation** (Phase 3). Only `creditsCharged` is cost. Retries and regenerations run only inside a named count-and-cost allowance. Never report numbers the MCP did not return.
 7. **No Meta upload here.** Hand off to meta-ad-launcher.
 
 ## Reference images (max 5)
@@ -88,12 +95,12 @@ If image-ad-clone is not installed, or nothing matches, compose a fresh prompt u
 Always append the three safety suffixes (no-chrome, edge-safe, glyph-safety; full text in the prompting guide) to the final prompt. Show the rewritten prompt to the user and ask: use it, edit it, or start over. Loop until approved.
 
 ### Phase 3: Credit estimate (MANDATORY, never skip)
-Arcads exposes no billing endpoint to you. Estimate the credit cost before generating:
-1. If the shared usage log (`outputs/arcads-usage-log.jsonl` at the workspace root, the repo clone directory recorded during setup) has a charge for a matching config, use the most recent one.
-2. Otherwise ask the user what their plan charges per gpt-image-2 image; if they know, use that number and save it to the log.
-3. If the log is empty and the user does not know: run a **calibration batch of 1**. With the user's go-ahead, generate a single image first, observe the credits actually consumed (`creditsCharged` from the MCP, or have the user check the Arcads dashboard), append that to the usage log, then estimate the full batch from the observed number and confirm before generating the rest.
+Arcads exposes no billing or quote endpoint to you. Estimate the credit cost before generating:
+1. Ask the user what their plan charges per gpt-image-2 image; if they know, use that number and save it to the log.
+2. Otherwise, if the shared usage log (`outputs/arcads-usage-log.jsonl` at the workspace root, resolved from the setup-state file) has a recorded `creditsCharged` for a matching config, use the most recent one.
+3. If neither exists: the first generation is an **unknown-cost calibration of 1**. The user states a maximum acceptable credit exposure for that single image in the approval; you generate one image, read back `creditsCharged`, append it to the usage log, then estimate the full batch from the observed number and confirm again before generating the rest.
 
-Present `~credits x N variants` clearly labeled as an **estimate**, tell the user to confirm the exact cost in the Arcads platform, and **wait for explicit confirmation before generating**. Daily-limit plans report `creditsCharged: 0` with `usedDailyLimit: true`; still show the estimate and still get confirmation. Never invent a number without a source.
+Present `~credits x N variants` clearly labeled as an **estimate** with its basis, name any retry allowance (count and cost) or state that there is none, tell the user to confirm the exact cost in the Arcads platform, and **wait for explicit confirmation before generating**. Daily-limit plans report `creditsCharged: 0` with `usedDailyLimit: true`; that is a daily-limit use, not "free", so still show the estimate and still get confirmation. Never invent a number without a source.
 
 ### Phase 4: Upload references (if any)
 Per Reference images above. Upload fresh immediately before the generation call; collect the `filePath` values.
@@ -108,13 +115,13 @@ arcads_generate_image_gpt(
   nbGenerations = <N>,
 )
 ```
-Record each call in `outputs/arcads-usage-log.jsonl` at the workspace root (model, aspectRatio, ref count, N, each assetId; later the final status and `creditsCharged` exactly as the MCP returned it). Never log credentials, and never report performance or billing numbers the MCP did not return.
+Record each call in `outputs/arcads-usage-log.jsonl` at the workspace root (tool, model, aspectRatio, resolution if any, ref count, count N, date, each assetId; later the final status, `creditsCharged` exactly as the MCP returned it, and the daily-limit indicator). Never log credentials or signed URLs, and never report performance or billing numbers the MCP did not return.
 
 ### Phase 6: Poll + visual QA (MANDATORY)
-Poll every assetId with `arcads_watch_asset` until `generated`; download the files. Then **view each image** and inspect for: garbled small text (the main gpt-image-2 failure on dense body text); wordmark drift; wrong element count (4 chat bubbles instead of 3); UI proportion drift (an iOS dialog too small or misshapen); duplicated column values in comparison tables. If a variant is defective, regenerate with a corrected prompt that names the fix explicitly (see Retry mode in the prompting guide); never resend the identical prompt. Cap 2 retries per variant. QA-fix regenerations after the Phase 3 confirmation do not need a fresh credit confirmation, but tell the user they happened.
+Poll every assetId with `arcads_watch_asset` until `generated`; download the files. Then **view each image** and inspect for: garbled small text (the main gpt-image-2 failure on dense body text); wordmark drift; wrong element count (4 chat bubbles instead of 3); UI proportion drift (an iOS dialog too small or misshapen); duplicated column values in comparison tables. If a variant is defective, a regeneration with a corrected prompt that names the fix explicitly (see Retry mode in the prompting guide) is a new credit-accounted operation: run it only inside the retry allowance the Phase 3 approval named (never more than 2 per variant), otherwise report the defect and ask first. Never resend the identical prompt. Report each regeneration's actual `creditsCharged`.
 
 ### Phase 7: Deliver + hand off
-Show the user the saved file paths (send the images through the chat channel where possible) and ask: use all, use these, regenerate, or cancel. For the selected files, offer the next steps:
+Show the user the saved file paths (send the images through the chat channel where possible), report actual `creditsCharged` per operation plus any daily-limit use, and ask: use all, use these, regenerate (a new gated batch), or cancel. For the selected files, offer the next steps:
 - **human-ad-copy** to write the primary text, headlines, and hooks that pair with the creative.
 - **meta-ad-launcher** to upload the images and build the campaign, ad set, and ads on Meta. Remind the user those are always created **PAUSED**, and that nothing gets activated and no budget gets changed without their explicit confirmation in that conversation.
 
@@ -125,11 +132,11 @@ Show the user the saved file paths (send the images through the chat channel whe
 | `400 Max 5 reference image(s)` | Reduce to 5 or fewer; if the concept needs more refs, switch to nano-banana-image-ad. |
 | `File not found` on a reference | You passed a local path; run the upload flow first. |
 | `REFERENCE_FILE_NOT_FOUND` on generate | The `filePath` was already consumed; re-upload fresh right before the call. |
-| `-32602` on any tool | Refresh the MCP tool list and retry once; poll only with `arcads_watch_asset`. |
-| Garbled small text | Regenerate: enlarge the text, use fewer words, add "all text large and legible", keep it inside the safe margin. |
-| Both comparison columns identical | Restate BOTH columns' values explicitly in the prompt and regenerate. |
-| `422` validation or moderation | Check `aspectRatio` is in the allowed set; tighten or soften the prompt wording. |
-| `status: failed` | Do not resend the same prompt; strip or reword whatever likely got flagged, then retry once. |
+| `-32602` on any tool | Refresh the MCP tool list, re-discover the registered name, and re-issue the read call; poll only with `arcads_watch_asset`. A generate call is never re-issued without its allowance. |
+| Garbled small text | Regenerate (inside the retry allowance or after a fresh yes): enlarge the text, use fewer words, add "all text large and legible", keep it inside the safe margin. |
+| Both comparison columns identical | Restate BOTH columns' values explicitly in the prompt and regenerate inside the retry allowance or after a fresh yes. |
+| `422` validation or moderation | Check `aspectRatio` is in the allowed set; tighten or soften the prompt wording; the re-issue still needs its allowance. |
+| `status: failed` | Do not resend the same prompt; strip or reword whatever likely got flagged. Credits may already have been charged; the retry is a new credit-accounted operation under the allowance or a fresh yes. |
 
 ## Out of scope
 

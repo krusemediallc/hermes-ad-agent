@@ -387,7 +387,7 @@ Before sending a still to Seedance, verify:
 - [ ] 9:16 aspect ratio
 - [ ] Beat 8 has clean negative space in the lower third
 
-Max 2 retries per beat. If the third attempt still loses clay texture or identity, try `arcads_generate_image_nano_banana` for that specific beat (it tends to hold texture better on close-ups and product props). Beat-by-beat fallback only; never switch the entire ad.
+A corrected-prompt retry is a new credit-accounted generation: run it only inside the retry allowance the still batch approval named (never more than 2 per beat), otherwise stop and ask the user, and report each retry's actual `creditsCharged`. If the allowed retries still lose clay texture or identity, propose `arcads_generate_image_nano_banana` for that specific beat (it tends to hold texture better on close-ups and product props) as a new gated generation. Beat-by-beat fallback only; never switch the entire ad.
 
 ## When the user already has a clay character
 

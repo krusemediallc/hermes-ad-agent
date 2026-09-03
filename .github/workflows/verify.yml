@@ -1,0 +1,55 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Docs consistency (em-dashes, obsolete phrases, manifest, frontmatter)
+        run: python3 scripts/check_docs_consistency.py
+
+      - name: Onboarding doctor (read-only; no Hermes in CI, so WARN is expected, BLOCK fails)
+        run: |
+          set +e
+          python3 scripts/onboarding_doctor.py --json --workspace .
+          rc=$?
+          set -e
+          echo "doctor exit code: $rc"
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+            echo "onboarding_doctor reported a BLOCK (exit $rc)"
+            exit 1
+          fi
+
+      - name: Byte-compile every Python file
+        run: |
+          find . -name '*.py' -not -path './.git/*' -print0 \
+            | xargs -0 -n1 python3 -m py_compile
+
+      - name: Secret pattern scan (tokens must never be committed)
+        run: |
+          set +e
+          grep -rnE \
+            --exclude-dir=.git \
+            --exclude-dir=__pycache__ \
+            --exclude=onboarding_doctor.py \
+            --exclude=check_docs_consistency.py \
+            'EAA[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|Bearer [A-Za-z0-9]{30,}' .
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "secret-looking literal found (see lines above)"
+            exit 1
+          fi
+          echo "no secret patterns found"
+
+      - name: Copy validator smoke test
+        run: python3 skills/human-ad-copy/scripts/validate_copy.py --help

@@ -12,11 +12,12 @@ description: >-
   performance targets (target CPA or target ROAS plus the conversion event and
   default campaign objective), and budget guardrails including the Arcads
   credit budget per batch, the Meta daily spend cap, and the PAUSED-only
-  acknowledgment. It writes BRAND.md to the workspace root (the repo clone
-  directory recorded during setup), reads it back for confirmation, then
-  saves a short profile to Hermes memory (one User Profile entry and one
-  Notes entry, no secrets or account IDs) so later sessions start with the
-  essentials. Use it
+  acknowledgment. It records the Meta token's expiry date (a date, never
+  the token) with a renewal reminder, writes BRAND.md to the workspace
+  root resolved from the setup-state file, updates that file's backend
+  fields, reads BRAND.md back for confirmation, then saves a short profile
+  to Hermes memory (one User Profile entry and one Notes entry, no secrets
+  or account IDs) so later sessions start with the essentials. Use it
   on first install, whenever BRAND.md is missing, when another skill routes
   the user here, or when the user says "set up my brand", "brand setup",
   "create my brand file", "onboard my business", "update my brand file",
@@ -26,9 +27,13 @@ description: >-
 # Brand setup
 
 You are building `BRAND.md`, the single file every other Hermes Ad Agent
-skill reads for brand context. It lives at the workspace root: the repo clone
-directory recorded during setup (SETUP.md Checkpoint 1 records its absolute
-path; the default is `~/hermes-ad-agent`). The structure to follow is the
+skill reads for brand context. It lives at the workspace root, which you
+resolve from the setup-state file before anything else:
+`$HERMES_HOME/hermes-ad-agent/setup-state.json` (fallback
+`~/.hermes/hermes-ad-agent/setup-state.json`), field `workspace_root`, an
+absolute path written by SETUP.md. If the file is missing or the field is
+empty, stop and route the user to SETUP.md; do not guess a directory or
+take one from the conversation. The structure to follow is the
 canonical template, available from two equivalent sources: the skill-local
 copy at `${HERMES_SKILL_DIR}/BRAND.template.md` and the repo-root copy at
 `<workspace root>/BRAND.template.md`. Read whichever you find first; they are
@@ -57,11 +62,17 @@ Ground rules for the whole flow:
 
 - Never invent a value. A field you cannot discover or the user does not
   answer is written as `(not set)`, not guessed.
-- Never store secrets. The MCP servers handle their own auth, and the Meta Ads
-  CLI (Meta's official command-line tool for the Marketing API) keeps its
-  token in a gitignored `.env`; BRAND.md holds business facts and the user's
-  own account identifiers only, never a token, and only after the user
-  confirms them.
+- Never store secrets. The MCP servers handle their own auth (the Meta MCP
+  token lives in the managed app's environment or the file
+  `hermes config env-path` names), and the Meta Ads CLI (Meta's official
+  command-line tool for the Marketing API) keeps its token in a gitignored
+  `.env`; BRAND.md holds business facts, the user's own account
+  identifiers, and the token's expiry DATE only, never a token value, and
+  only after the user confirms them.
+- Tool names in this file are server-native IDs (`ads_get_ad_accounts`);
+  the Hermes runtime registers them under prefixed callable names
+  (observed shape `mcp__meta_ads__ads_get_ad_accounts`). Discover the
+  registered name in your live tool list and call that.
 - Keep the interview conversational: two or three questions per message, not
   a wall of twenty.
 
@@ -86,8 +97,10 @@ over the CLI flags written here; server and CLI versions differ.
 On the MCP route:
 
 1. `ads_get_ad_accounts` to list the ad accounts the connected Meta login can
-   use. If there are several, show them by name and ask which is the default
-   for ad work.
+   use. If there are several, show them by name AND ID and ask which is
+   the default for ad work; the user picks by ID when two share a name
+   (identical display names across a business are common). Restate
+   "<name> (<act_ID>)" before recording it.
 2. For the chosen account, `ads_get_ad_account_pages` to find the Facebook
    Pages it can publish under (fall back to `ads_get_user_pages` if needed).
    Ask which Page is the default identity.
@@ -97,8 +110,9 @@ On the MCP route:
 On the CLI route:
 
 1. `meta ads adaccount list --output json` to list the ad accounts the system
-   user can use. If there are several, show them by name and ask which is the
-   default for ad work. The CLI's `AD_ACCOUNT_ID` (in the workspace `.env`,
+   user can use. If there are several, show them by name AND ID and ask
+   which is the default for ad work, picking by ID when names repeat. The
+   CLI's `AD_ACCOUNT_ID` (in the workspace `.env`,
    `act_` form) should be that default; if the user picks a different
    account, tell them to update `.env`, or that skills will pass
    `--ad-account-id` on each call.
@@ -114,6 +128,36 @@ connection" field under "## Meta Assets": `mcp` or `cli`. If neither
 backend is connected, write `(not set)` there, note it in the file's
 "## Setup Gaps" section, and continue; the interview still works without
 it.
+
+**Meta token expiry (a date, never the token).** On the MCP route the
+hosted Meta MCP accepts a user access token, and the long-lived form Meta
+issues lasts about 60 days with no refresh token, so renewal is manual
+and every reporting job needs to know the date. Ask the user for the
+expiry date recorded at SETUP.md Step 4 (the token exchange response
+reports it; the pack's read-only doctor,
+`python3 scripts/onboarding_doctor.py --meta-token-check` run from the
+workspace root, reports `expires_at` and days remaining without printing
+the token; verify its flags with `--help`). Write it under
+"## Meta Assets" as its own line, exactly:
+`Meta token expires: YYYY-MM-DD`, followed by the renewal reminder line:
+`Renewal: generate a new user token with all seven scopes, exchange it
+for a long-lived token, update the environment variable, restart the
+managed app, then update this date (SETUP.md Step 4).` On the CLI route
+with a system user token, which has no scheduled expiry, write
+`Meta token expires: none (system user token; can still be invalidated)`.
+If the user does not know the date, write `Meta token expires: (not set)`
+and add a Setup Gaps line saying reporting jobs will warn about it until
+it is filled in. Never write the token value, its prefix, or its length.
+
+**Update the setup-state file.** If
+`$HERMES_HOME/hermes-ad-agent/setup-state.json` (fallback
+`~/.hermes/hermes-ad-agent/setup-state.json`) exists, update the fields
+this discovery learned and leave the rest untouched: `meta_backend`
+(`mcp`, `cli`, or `none`) and `arcads_connected` (`true` or `false`).
+Read the file, change only those keys, write it back as valid JSON, and
+read it back to confirm. Do not create the file if it is missing (SETUP.md
+owns creation; note the gap instead), and never write a token, an account
+ID, or any other identifier into it.
 
 **Account audit memory** (`memory/accounts/act_<ACCOUNT_ID>.md` at the
 workspace root, one file per ad account, written by the `account-audit`
@@ -215,13 +259,16 @@ answered and asking only for what is missing.
    parse this file by its headings.
 2. Fill every field with the confirmed value or `(not set)`. The "Meta
    connection" field under "## Meta Assets" is written from Step 1
-   discovery (`mcp` or `cli`), not asked. Anything left `(not set)` also
-   gets a line under "## Setup Gaps" so a later session knows what to
-   revisit.
+   discovery (`mcp` or `cli`), not asked, and the
+   `Meta token expires: YYYY-MM-DD` line plus its renewal reminder go
+   under the same heading even when the template you copied does not
+   list them (the reporting skills parse that exact line). Anything left
+   `(not set)` also gets a line under "## Setup Gaps" so a later session
+   knows what to revisit.
 3. Add the first Changelog entry under "## Changelog" ("<date>: Initial
    setup via brand-setup").
-4. Write the file to the workspace root (the repo clone directory recorded
-   during setup) as `BRAND.md`.
+4. Write the file to the workspace root (resolved from the setup-state
+   file) as `BRAND.md`.
 
 ## Step 4: Read it back
 
@@ -236,13 +283,15 @@ confirmed, do Step 5 before closing.
 
 BRAND.md is the full profile, but Hermes only reads it when a skill opens
 it. Hermes also keeps two small personal memory files that are injected
-into the system prompt of every session: `~/.hermes/memories/USER.md`
-("User Profile" in the dashboard, who the user is and how they want to be
-worked with, cap 1,375 characters) and `~/.hermes/memories/MEMORY.md` ("My
-Notes", the agent's own notes about the environment, cap 2,200
-characters). Use the built-in `memory` tool to write one entry in each so
-the next session knows where the brand lives and how to behave before it
-opens a single file.
+into the system prompt of every session, under `$HERMES_HOME/memories/`
+(`~/.hermes/memories/` when `HERMES_HOME` is unset): `USER.md` ("User
+Profile" in the dashboard, who the user is and how they want to be
+worked with, cap 1,375 characters) and `MEMORY.md` ("My Notes", the
+agent's own notes about the environment, cap 2,200 characters). Use the
+built-in `memory` tool to write one entry in each so the next session
+knows where the brand lives and how to behave before it opens a single
+file. The setup-state file, not these notes, is the machine-readable
+source of the workspace root; the note is a human-readable pointer.
 
 1. **User Profile entry** (the `memory` tool, user-profile target), under
    400 characters, starting with the stable prefix `Hermes Ad Agent:`.
@@ -278,8 +327,9 @@ opens a single file.
    size, shorten the entry rather than trimming someone else's.
 5. **Tell the user what just happened.** Both files are loaded as a frozen
    snapshot at session start, so these entries take effect from the next
-   session, not this one. If `memory.write_approval` is true in
-   `~/.hermes/config.yaml`, the writes sit in `/memory` as pending until
+   session, not this one. If `memory.write_approval` is true in the
+   Hermes config (`hermes config path` prints where it lives), the writes
+   sit in `/memory` as pending until
    the user runs `/memory approve` (or `/memory reject`); say so and ask
    them to approve. If `memory.memory_enabled` or
    `memory.user_profile_enabled` is false, skip the matching entry, say
@@ -307,7 +357,13 @@ When the user says "update my brand file" or names a specific change:
 3. Re-run the matching discovery step only when the change involves connected
    assets (a new ad account, Page, Instagram account, or Arcads product) or
    the Meta connection changed (for example the user moved from the CLI to
-   the MCP); update the "Meta connection" field to match.
+   the MCP); update the "Meta connection" field to match, and update
+   `meta_backend` and `arcads_connected` in the setup-state file if it
+   exists. When the user says the Meta token was renewed ("I got a new
+   token", "renewed my Meta token", or a reporting job's expiry alert sent
+   them here), update only the `Meta token expires: YYYY-MM-DD` line with
+   the new date and add a Changelog entry; never ask for or record the
+   token itself.
 4. If the change touches budget guardrails, re-read the new numbers back
    explicitly before saving; these fields gate real spending. The PAUSED-only
    acknowledgment never gets removed, only re-affirmed.
@@ -342,16 +398,27 @@ When the user says "update my brand file" or names a specific change:
   rules only, and they are read into every session's prompt.
 - Do not `add` a second `Hermes Ad Agent:` entry on a re-run; `replace`
   the existing one.
+- Do not record the Meta token, any fragment of it, or its length; the
+  expiry date is the only token fact BRAND.md carries.
+- Do not create or rewrite the setup-state file wholesale; change only
+  `meta_backend` and `arcads_connected`, and only when the file exists.
+- Do not choose an ad account by display name alone.
 
 ## Verification
 
-Before you call the flow done: `BRAND.md` exists at the workspace root (the
-repo clone directory recorded during setup), its headings match the
-canonical template exactly, every field is either a confirmed value or an
-explicit `(not set)`, the Meta connection field is `mcp`, `cli`, or
-`(not set)` with a Setup Gaps line, at least one performance target (CPA or
-ROAS) plus the default conversion event and campaign objective are present,
-the three budget guardrails and the PAUSED-only acknowledgment are present,
-the user confirmed the read-back, and Hermes memory holds exactly one
-`Hermes Ad Agent:` entry in the User Profile and one in Notes (or the user
-was told the writes are pending approval, or that memory is disabled).
+Before you call the flow done: `BRAND.md` exists at the workspace root
+resolved from the setup-state file, its headings match the canonical
+template exactly, every field is either a confirmed value or an explicit
+`(not set)`, the Meta connection field is `mcp`, `cli`, or `(not set)`
+with a Setup Gaps line, the `Meta token expires:` line is present under
+"## Meta Assets" with a date, `none (system user token; ...)`, or
+`(not set)` plus a Setup Gaps line, the ad account is recorded by name and
+ID, at least one performance target (CPA or ROAS) plus the default
+conversion event and campaign objective are present, the three budget
+guardrails and the PAUSED-only acknowledgment are present, the user
+confirmed the read-back, the setup-state file (when it exists) reads back
+with the `meta_backend` and `arcads_connected` values you observed, and
+Hermes memory holds exactly one `Hermes Ad Agent:` entry in the User
+Profile and one in Notes (or the user was told the writes are pending
+approval, or that memory is disabled). Nothing in any of those files is
+a token value.

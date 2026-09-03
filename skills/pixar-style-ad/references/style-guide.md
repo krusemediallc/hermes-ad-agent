@@ -89,7 +89,7 @@ One-shot text-to-video is the wrong choice: you get character drift between beat
 - Generate the voiceover with Arcads text-to-speech (`arcads_text_to_speech`) and overlay it in post. Never use an in-prompt narrator line in the Seedance prompt; set `audioEnabled: false`.
 - One `voiceId` across all beats. A second characterful voice is allowed for the anthropomorphized problem character's line only.
 - **No dead space.** The voiceover must fill the clip it plays over. Dead air kills retention; viewers swipe on the first half second of silence. Per beat, either trim the clip to `vo_duration + 0.5s` (default), or extend the VO by a few words when the visual needs the full time to land (a camera move, the mascot mechanism, the CTA hold). An allowed micro-buffer is about a quarter second of lead and a quarter second of tail.
-- If the VO runs longer than the clip, never speed it up. Split the line across two beats or regenerate the clip at a longer duration.
+- If the VO runs longer than the clip, never speed it up. Split the line across two beats or regenerate the clip at a longer duration (a new credit-accounted generation; gate it before running it).
 - Pace planning: assume roughly 2.5 spoken words per second when choosing each beat's `duration`.
 
 ## Negative prompt block (paste into every video prompt)

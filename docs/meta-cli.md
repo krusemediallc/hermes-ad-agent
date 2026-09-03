@@ -44,7 +44,35 @@ Skills do not need to be told which backend is live; every skill that touches Me
 2. Otherwise, in the terminal, run `meta auth status`; if it reports a token, run `meta ads adaccount list --output json`. If that returns accounts, the Meta Ads CLI is configured: use the CLI backend.
 3. If neither works, stop and tell the user Meta is not connected yet (SETUP.md Step 4 covers both routes).
 
-If both are available, skills prefer the MCP (broader surface: Ad Library search, previews, anomaly signals, diagnostics). The agent says once which backend it is using, then proceeds, and never switches backends in the middle of a create sequence without telling the user.
+If both are available, skills use the MCP as the primary backend (broader surface: Ad Library search, previews, anomaly signals, diagnostics) and route media upload and creative creation to the CLI (next section). The agent says once which backend it is using and which operations the CLI carries, then proceeds, and never switches backends in the middle of a create sequence without telling the user.
+
+---
+
+## Why the CLI route matters even when the MCP works
+
+The MCP is the broader backend, but two things this pack needs on every launch are CLI-only today:
+
+1. **Local media upload.** The MCP's `ads_creative_upload_image` / `ads_creative_upload_video` take a public URL only (the server fetches the bytes itself), and on some accounts they answer "This tool is new and is being gradually rolled out", which means unavailable for that account, not a credential problem. `meta ads creative create --image ./file` or `--video ./file` uploads a local file as part of creating the creative.
+2. **One flexible creative carrying the whole copy pool.** The MCP's `ads_create_creative` has scalar `message` / `headline` / `description` fields and no `asset_feed_spec`, so it cannot put 5 primary texts, 5 headlines, and 3 descriptions into one ad unit. The CLI can, either with each plural flag repeated once per value or with `--asset-feed-spec @feed.json`:
+
+   ```bash
+   meta ads creative create --name "<name>" --page-id <PAGE_ID> \
+     [--instagram-actor-id <IG_ID>] \
+     --video ./creative.mp4 \
+     --bodies "<primary 1>" --bodies "<primary 2>" --bodies "<primary 3>" \
+     --bodies "<primary 4>" --bodies "<primary 5>" \
+     --titles "<headline 1>" --titles "<headline 2>" --titles "<headline 3>" \
+     --titles "<headline 4>" --titles "<headline 5>" \
+     --descriptions "<description 1>" --descriptions "<description 2>" \
+     --descriptions "<description 3>" \
+     --link-url <URL> --call-to-action <CTA> --output json
+   ```
+
+   Then read the creative back (`meta ads creative get <ID> --output json`, or the Tier A read below when `asset_feed_spec` is not in that output) and check for 5 bodies, 5 titles, and 3 descriptions before creating the ad.
+
+So the recommended setup is both backends: the MCP for reads, previews, diagnostics, and the campaign / ad set / ad objects; the CLI for media and creatives. The `meta-ad-launcher` skill routes those two operations to the CLI automatically when it is installed. When it is not, the launcher stops before the creative and asks the user to either install this route or explicitly accept a single-variant creative; it never splits the pool across several ads and never writes through the Graph API.
+
+**Token note.** The CLI works with a **system user** token (the setup below). The hosted Meta MCP rejects that same token class (HTTP 401) because it lacks the `ads_mcp_management` scope and needs a fully scoped user token instead, so the two backends legitimately run on different tokens. Keep each where its setup step says (the managed app's environment or the `.env` file), never in chat, BRAND.md, or a job prompt.
 
 ---
 
@@ -202,7 +230,7 @@ Add `--output json` when an agent runs them. The per-entity field lists to reque
 
 **`insights get`:** level, breakdowns, date_preset / since / until, time_increment, sort, limit, fields (hyphenated on the command line; `--help` prints the exact spelling and accepted values).
 
-Still UNVERIFIED on 1.1.0: ad set flags for `frequency_control_specs`, `bid_constraints`, `adset_schedule`, and `is_dynamic_creative`; the `source_campaign_id` / `source_adset_id` / `source_ad_id` copy-from fields on any `create`; and whether `meta ads creative get` returns `degrees_of_freedom_spec` and `asset_feed_spec`. `meta ads <resource> create --help` is authoritative. When a native flag is missing, the Tier A Graph read below covers the read side.
+Still UNVERIFIED on 1.1.0: ad set flags for `frequency_control_specs`, `bid_constraints`, `adset_schedule`, and `is_dynamic_creative`; the `source_campaign_id` / `source_adset_id` / `source_ad_id` copy-from fields on any `create`; and whether `meta ads creative get` returns `degrees_of_freedom_spec` and `asset_feed_spec`. `meta ads <resource> create --help` is authoritative. When a native flag is missing, the Tier A Graph read below covers the read side; there is no Graph write fallback, so a field no backend can write is reported as a gap.
 
 ### Diagnostics
 
@@ -238,7 +266,7 @@ The canonical mapping between the Meta MCP tools in [meta-mcp.md](meta-mcp.md) a
 | Create campaign (PAUSED) | `ads_create_campaign` | `meta ads campaign create --name "<name>" --objective <OBJECTIVE> [--daily-budget <minor units>] [--bid-strategy <STRATEGY>] [--pacing-type ...] [--special-ad-categories ...] [--adset-budget-sharing ...] --status PAUSED --output json` |
 | Create ad set (PAUSED) | `ads_create_ad_set` | Simple: `meta ads adset create <CAMPAIGN_ID> --name "<name>" --optimization-goal <GOAL> --billing-event IMPRESSIONS --daily-budget <minor units> --targeting-countries <CC> [--age-min --age-max --genders] [--pixel-id <ID> --custom-event-type <EVENT>] --status PAUSED --output json`. Exact mirror: the same command with `--targeting @targeting.json` (the full targeting object; replaces `--targeting-countries`), `--promoted-object @promoted.json`, `--attribution-spec '<json>'`, and where the reference sets them `--advantage-audience`, `--dsa-beneficiary`, `--dsa-payor`, `--conversion-domain` |
 | Upload image / video | `ads_creative_upload_image` / `ads_creative_upload_video` | folded into `meta ads creative create --image ./file` or `--video ./file` (auto-upload) |
-| Create creative | `ads_create_creative` (single `message` / `headline` / `description` per creative; multi-variant needs one ad per variant, the CLI, or the Graph API) | Simple: `meta ads creative create --name "<name>" --page-id <PAGE_ID> [--instagram-actor-id <IG_ID>] --image ./file --bodies "<primary 1>" --bodies "<primary 2>" --titles "<headline 1>" --titles "<headline 2>" --descriptions "<description 1>" --link-url <URL> --call-to-action <CTA> --output json` (repeat each plural flag once per value; singular `--body/--title/--description` for one variant; for video, `--video ./file` with no `--image`). Exact mirror: add `--degrees-of-freedom-spec @dof.json` (the reference's enhancement enrollment, verbatim), `--url-tags "<tags>"`, `--contextual-multi-ads ...`, and for multi-variant references `--asset-feed-spec @afs.json` or a full `--object-story-spec @oss.json` in place of the shortcut flags |
+| Create creative | `ads_create_creative` (scalar `message` / `headline` / `description`; the pack's one flexible 5 / 5 / 3 creative per media asset needs the CLI, and the launcher never splits the pool into one ad per variant) | Simple: `meta ads creative create --name "<name>" --page-id <PAGE_ID> [--instagram-actor-id <IG_ID>] --image ./file --bodies "<primary 1>" --bodies "<primary 2>" --titles "<headline 1>" --titles "<headline 2>" --descriptions "<description 1>" --link-url <URL> --call-to-action <CTA> --output json` (repeat each plural flag once per value; singular `--body/--title/--description` for one variant; for video, `--video ./file` with no `--image`). Exact mirror: add `--degrees-of-freedom-spec @dof.json` (the reference's enhancement enrollment, verbatim), `--url-tags "<tags>"`, `--contextual-multi-ads ...`, and for multi-variant references `--asset-feed-spec @afs.json` or a full `--object-story-spec @oss.json` in place of the shortcut flags |
 | Create ad (PAUSED) | `ads_create_ad` | `meta ads ad create <AD_SET_ID> --name "<name>" --creative-id <CREATIVE_ID> --status PAUSED --output json` |
 | Preview an ad | `ads_get_ad_preview` | not available; the user reviews the paused ad in Ads Manager by name or ID |
 | Activate | `ads_activate_entity` | `meta ads <campaign\|adset\|ad> update <ID> --status ACTIVE` (spend-gated) |
@@ -256,7 +284,7 @@ Also MCP-only: advertiser context, industry and auction benchmarks, opportunity 
 
 ## Direct Graph API read (Tier A)
 
-The CLI's `--fields` returns campaigns, ad sets, and ads completely, but whether `meta ads creative get` returns `degrees_of_freedom_spec` and `asset_feed_spec` is UNVERIFIED on 1.1.0. For creatives, and for any field with no native flag, the same Route B system user token can read the Graph API directly. [meta-rebuild-fields.md](meta-rebuild-fields.md) calls this Tier A; it is the guaranteed path for creative enhancement settings, and the `account-audit` skill uses it for its rebuild specs whenever the token is configured, even when the MCP is the primary backend. In this pack Tier A is a read; a direct Graph write is a last resort for fields no MCP tool or CLI flag exposes, still PAUSED and still confirm-gated.
+The CLI's `--fields` returns campaigns, ad sets, and ads completely, but whether `meta ads creative get` returns `degrees_of_freedom_spec` and `asset_feed_spec` is UNVERIFIED on 1.1.0. For creatives, and for any field with no native flag, the same Route B system user token can read the Graph API directly. [meta-rebuild-fields.md](meta-rebuild-fields.md) calls this Tier A; it is the guaranteed path for creative enhancement settings, and the `account-audit` skill uses it for its rebuild specs whenever the token is configured, even when the MCP is the primary backend. In this pack Tier A is read-only: there is no Graph write path. A field that neither the MCP nor the CLI can write is reported as a gap in the plan and the verify report, never POSTed with this token.
 
 Run it from the workspace root, where `.env` holds `ACCESS_TOKEN`, and let the shell read the token:
 

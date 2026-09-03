@@ -16,7 +16,7 @@ The worked fragments below continue the neutral fictional example from the story
 - **Audio:** `audioEnabled: false`. All voiceover comes from Arcads TTS in post; never put a narrator line in the prompt. In-prompt narration produces inconsistent voice quality across beats and locks pacing to the video model.
 - **Prompt length:** 100 to 260 words, structured Subject + Action + Camera + Style + Constraints, one primary action per shot.
 - **Forbidden words** (Seedance content checks reject or degrade on these): `cinematic`, `professional`, `stunning`, `8k`, `studio`, `perfect`. Substitute "stop-motion claymation film aesthetic", "polished hand-sculpted", "high fidelity", "evenly hand-painted".
-- **If a generation comes back `failed`,** never resend the same prompt. Strip flagged or forbidden words, tighten the wording, and retry (max 2 retries per beat). Seedance bills at submission, so a failed content check may still show a charge.
+- **If a generation comes back `failed`,** never resend the same prompt. Strip flagged or forbidden words and tighten the wording. The corrected retry is a new credit-accounted generation: run it only inside the retry allowance the batch approval named (never more than 2 per beat), otherwise ask first. Seedance bills at submission, so a failed content check may still show a charge; report its actual `creditsCharged`.
 - **Always end the prompt with the no-text constraint.** Seedance sometimes invents captions; every prompt must include "no on-screen text, no subtitles, no captions."
 - **Critical for this style:** the motion must read as smooth animation that preserves the claymation aesthetic of the still. Do NOT ask for stop-motion judder in the prompt; the model cannot control framerate and the request breaks the look. Judder, if wanted, is a post step (see `SKILL.md`).
 
@@ -362,7 +362,7 @@ no on-screen text, no subtitles, no captions.
 2. **Lift the SUBJECT LOCK fragments verbatim** into every beat. Do not paraphrase the protagonist description.
 3. **Keep the style block consistent** across all beats: "stop-motion claymation film aesthetic" everywhere, never `cinematic`, never `Pixar`, never `3D rendered`.
 4. **Fire all beats in parallel** once their stills are approved, then poll every asset id with `arcads_watch_asset` at a relaxed cadence (a clip typically takes around 7 minutes, occasionally up to 15).
-5. **Log each call** (model, beat, duration, resolution, reference count, asset id, and `creditsCharged` when known) to the run's `log.jsonl`.
+5. **Log each call** (tool, model, beat, duration, resolution, aspect ratio, reference count, count, date, asset id, final status, `creditsCharged` exactly as returned, and the daily-limit indicator) to the shared usage log `outputs/arcads-usage-log.jsonl` at the workspace root. Only `creditsCharged` is cost; the `mp` field is megapixel or usage metadata, never credits. Never log the signed download URL.
 
 ## Per-clip QA (claymation-specific)
 
@@ -378,7 +378,9 @@ Watch each finished clip end to end (or have the user do it) and verify:
 - [ ] Mirror reflections move correctly on Beats 2, 4, and 7
 - [ ] The Beat 3 mouth movement is plausible (a rough match is fine for Seedance)
 
-If clay texture flattens or identity drifts, regenerate with a tightened material-detail block and an explicit "preserve all clay texture from @(img1)" constraint. Max 2 retries per beat, then stop and ask the user.
+Report the QA states separately, never as one "QA passed": metadata-pass (duration, resolution, aspect, silent), sampled-frames-pass (the texture, fabric, eye, and label checks above on sampled frames), transcript-pass (voiced master only; Arcads transcription is credit-accounted and needs an allowance), motion/lip-sync review required (texture drift over time, mirror behavior, and Beat 3 mouth plausibility need the clip watched end to end; frames never clear it), claims/branding check (prop and label match the cast sheet; the Beat 7 improvement stays localized), and human approval.
+
+If clay texture flattens or identity drifts, a regeneration with a tightened material-detail block and an explicit "preserve all clay texture from @(img1)" constraint is a new credit-accounted generation: run it only inside the retry allowance the batch approval named (never more than 2 per beat), otherwise stop and ask the user.
 
 ## After animation
 

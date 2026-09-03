@@ -1,6 +1,6 @@
 ---
 name: human-ad-copy
-description: Writes and revises specific, natural direct-response ad copy for Meta (Facebook and Instagram) without generic AI-writing habits, then hands the finished set directly to the meta-ad-launcher skill. It builds a claim ledger before drafting, selects from 15 direct-response frameworks, enforces a hard no-em-dash rule, screens for known AI tells, and produces the standard Meta liquidity set of 5 primary texts, 5 headlines, and 3 descriptions. Use it for every request to write Meta primary text, body copy, hooks, headlines, titles, descriptions, or copy variants, and whenever the user says things like "write the ad copy", "give me 5 primary texts", "humanize this", "this sounds like AI", "make it not sound like a robot", "de-slop this", "check this copy for AI tells", or "write this with one of the frameworks". Also run it as the final pass on any copy another skill produced before it goes to meta-ad-launcher.
+description: Writes and revises specific, natural direct-response ad copy for Meta (Facebook and Instagram) without generic AI-writing habits, then hands the finished set directly to the meta-ad-launcher skill. It builds a claim ledger before drafting, selects from 15 direct-response frameworks, enforces a hard no-em-dash rule, screens for known AI tells, and produces the standard Meta liquidity set of 5 primary texts, 5 headlines, and 3 descriptions that live inside one flexible ad unit per media asset, presented verbatim for explicit approval before the launcher binds it to a content hash. Use it for every request to write Meta primary text, body copy, hooks, headlines, titles, descriptions, or copy variants, and whenever the user says things like "write the ad copy", "give me 5 primary texts", "humanize this", "this sounds like AI", "make it not sound like a robot", "de-slop this", "check this copy for AI tells", or "write this with one of the frameworks". Also run it as the final pass on any copy another skill produced before it goes to meta-ad-launcher.
 ---
 
 # Human ad copy
@@ -11,7 +11,7 @@ unreliable, and no wording pattern proves who or what wrote a passage. This
 skill is an editorial system for removing generic patterns that readers often
 associate with low-effort generated copy.
 
-**Hard requirement (operator mandate): never use em dashes (`—`) in ad copy.**
+**Hard requirement (operator mandate): never use em dashes (U+2014) in ad copy.**
 This applies to every primary text, headline, description, hook, and draft,
 with no exceptions. Rewrite with a period, comma, colon, or a split sentence.
 The bundled validator treats any em dash as a HARD failure that blocks handoff.
@@ -35,10 +35,18 @@ Before drafting, identify:
   constraints, and failures.
 - Action: the one thing the reader should do.
 
-**Read the user's BRAND.md first.** It carries the brand voice, offer facts, and
-approved claims that feed the ledger below. If BRAND.md is missing, offer to run
-the brand-setup skill before drafting. You can draft without it, but say so and
-mark every brand-dependent fact as unverified.
+**Resolve the workspace root, then read the user's BRAND.md.** The workspace
+root is recorded in the pack's setup-state file,
+`$HERMES_HOME/hermes-ad-agent/setup-state.json` (fallback
+`~/.hermes/hermes-ad-agent/setup-state.json`; on Hostinger managed Hermes
+`HERMES_HOME` is `/data`). Read its `workspace_root` and open `BRAND.md` there.
+Do not assume the current directory is the workspace, and do not rely on a path
+mentioned earlier in the conversation. If the file is missing, ask the user for
+the workspace root and suggest re-running setup so the next session can find it.
+BRAND.md carries the brand voice, offer facts, and approved claims that feed the
+ledger below. If BRAND.md is missing, offer to run the brand-setup skill before
+drafting. You can draft without it, but say so and mark every brand-dependent
+fact as unverified.
 
 **Check the account memory next.** If `memory/accounts/act_<ACCOUNT_ID>.md`
 exists at the workspace root for the connected ad account (the
@@ -120,7 +128,9 @@ rendering can vary.
 - **Description**: aim for roughly 30 to 50 characters. Use a supporting fact,
   term, or mechanism rather than a second headline.
 - **Liquidity set**: default to 5 primary texts, 5 headlines, and 3
-  descriptions when preparing a launch-ready set for meta-ad-launcher.
+  descriptions when preparing a launch-ready set for meta-ad-launcher. The
+  whole pool goes into one flexible ad unit per media asset; it is never
+  split into five ads.
 
 All headlines and descriptions should pair truthfully with all primary texts
 because Meta may mix them. Do not rely on a description to carry required
@@ -131,8 +141,12 @@ context.
 Always run the bundled validator when a terminal is available. It is plain
 `python3` with the standard library only, no packages, no network, no keys.
 The script lives inside this skill folder at `scripts/validate_copy.py`
-(absolute path: `${HERMES_SKILL_DIR}/scripts/validate_copy.py`, typically
-`~/.hermes/skills/human-ad-copy/scripts/validate_copy.py`).
+(absolute path: `${HERMES_SKILL_DIR}/scripts/validate_copy.py`, which resolves
+under `$HERMES_HOME/skills/human-ad-copy/`; on Hostinger managed Hermes that is
+`/data/skills/human-ad-copy/scripts/validate_copy.py`, on a default install
+`~/.hermes/skills/human-ad-copy/scripts/validate_copy.py`). Never hard-code
+`~/.hermes`; if `HERMES_SKILL_DIR` is unset, locate the skills directory from
+`$HERMES_HOME` or `hermes config path` (verify with `--help` on your build).
 
 The validator accepts plain text for a single draft, or JSON for a full set.
 For the full-set check, write the set to a temporary `copy.json` in exactly
@@ -171,6 +185,15 @@ Exit code `1` means hard findings exist. Review-only findings return `0`.
 CLI or unreadable-input errors return `2`. A clean scan does not certify human
 authorship or guarantee performance.
 
+**Show every REVIEW finding to the user, never swallow it.** An exit code of
+`0` is not a clean bill: the validator still prints review findings (near
+duplicates, unsupported-claim cues, length guidance), and a set was once
+handed off with those warnings hidden behind "validator passed". Copy each
+review finding, verbatim or in a one-line paraphrase that keeps the flagged
+text, into the Validation section of the handoff block together with what you
+did about it (fixed, kept on purpose with a reason, or left for the user to
+decide). The user approves the copy with those warnings in view.
+
 **If no terminal is available in your session**, apply the full checklist in
 [references/ai-tells.md](references/ai-tells.md) manually: scan every variant
 for em dashes, exact duplicates, canned phrases, generic vocabulary, negative
@@ -194,14 +217,48 @@ strategic fit. Read the set aloud and ask:
 
 The deliverable of this skill is a structured markdown block that the
 meta-ad-launcher skill consumes directly when it builds the ad (always in
-PAUSED status, with its own human confirmation gates). Produce it in exactly
-this shape:
+PAUSED status, with its own human confirmation gates).
+
+Three rules govern the block:
+
+1. **One ad unit, not five ads.** The 5 primary texts and 5 headlines (and 3
+   descriptions) live inside ONE ad unit: one flexible creative per media
+   asset, built with `asset_feed_spec` (or the Meta Ads CLI's repeated
+   `--bodies` / `--titles` / `--descriptions` flags), so Meta rotates the
+   variants within that single ad. Never five separate ads, one per primary
+   text. The launcher must not silently reduce the set to one variant and must
+   not multiply the ad count; if its backend cannot build the flexible unit,
+   it blocks before creating anything and gives the user the choice. Write the
+   handoff so that intent is unmistakable: the block below describes one ad
+   per media asset carrying the whole pool.
+2. **Present the block verbatim and get explicit approval.** Show the user the
+   complete handoff block exactly as written: every primary text, headline,
+   description, the CTA type, the destination, and which media asset each
+   pairs with. Do not summarize it, and do not treat "looks good", "get these
+   built", or a timed-out approval form as approval of copy the user never saw
+   in full. Ask a direct question ("Approve this copy set as shown?") and wait
+   for a yes that refers to this exact block.
+3. **Approval is bound to a content hash.** The meta-ad-launcher skill
+   computes a sha256 of the canonical pool text of the approved block
+   (`python3` with `hashlib`, or `shasum -a 256`) and stores only that hash
+   plus a short approval note in the run ledger, never the copy itself. Any
+   edit to any field afterwards, even fixing one word, produces a new version
+   with a new hash that needs its own approval. So finish all edits before
+   asking, and after approval hand the block over unchanged. If the user asks
+   for a change after approving, produce the revised block in full, present it
+   verbatim again, and say plainly that the earlier approval no longer
+   applies.
+
+Produce the block in exactly this shape:
 
 ```markdown
 ## Ad copy handoff
 
 **Offer / destination:** [product and landing URL or destination]
 **Call to action type:** [for example LEARN_MORE, SHOP_NOW, SIGN_UP]
+**Media pairing:** [which image or video file(s) this pool attaches to]
+**Ad structure:** one flexible ad unit per media asset carrying all 5 primary
+texts, 5 headlines, and 3 descriptions (asset_feed_spec), not separate ads
 
 ### Primary texts
 1. [primary text 1]
@@ -224,10 +281,16 @@ this shape:
 
 ### Validation
 Validator: [PASS / FAIL / not run, checklist applied manually]
-Hard findings: [count] | Review findings: [count and one-line disposition]
+Hard findings: [count, must be 0 at handoff]
+Review findings: [count]
+- [each review finding, with the flagged text and your disposition]
 
 ### Claims to verify
 - [only when unverified claims remain; otherwise omit this section]
+
+### Approval
+Version: [1, 2, ... incremented on every edit]
+Approved as shown: [pending / yes, with the user's words]
 ```
 
 Keep unverified notes outside the copy itself. Only produce a `copy.json` file
@@ -235,9 +298,20 @@ as the deliverable when the user asks for JSON; otherwise JSON exists only as
 the temporary validator input. When no launch is planned and the user just
 wants copy, use the same labeled structure without the handoff framing.
 
+The hash itself is computed by the launcher at ledger time, not by this skill,
+so do not print one here; what this skill guarantees is that the approved
+block is complete, verbatim, and unchanged after the user's yes.
+
 ## Pitfalls
 
 - Do not hand off a set with any HARD finding outstanding.
+- Do not hide REVIEW findings behind "validator passed"; list them in the block.
+- Do not hand off copy the user has not seen in full, and do not take a
+  general "go ahead" as approval of a block that was never shown verbatim.
+- Do not edit approved copy on the way to the launcher; any change is a new
+  version that needs a new approval.
+- Do not describe the set as five ads. It is one flexible ad unit per media
+  asset with the whole pool inside it.
 - Do not "fix" a flagged generic word by swapping in a synonym; add a receipt.
 - Do not invent testimonials, statistics, deadlines, or scarcity.
 - Do not report or imply performance numbers that no MCP tool or user provided.

@@ -20,54 +20,76 @@ https://mcp.facebook.com/ads
 
 It gives an agent first-party tools across the whole advertising surface: reporting and insights, campaign and ad management, creative upload, the public Ad Library, custom audiences, pixels and datasets, product catalogs, A/B and lift tests, and diagnostics/help.
 
-What makes it unusually easy to set up: auth is **Meta Business OAuth**. There is no developer app to create, no App Review, and no API token to generate. You connect the URL, sign in with a Meta Business account in the browser, and approve which ad accounts the connector can access.
+Authentication is not automatic. Meta documents two routes: OAuth through a Meta app you have pre-registered (with a callback the connecting client can serve), or a programmatic **user access token** sent as a bearer header. Generic OAuth with dynamic client registration is refused by Meta, so a headless Hermes (Hostinger Managed App) uses the user-token route. The full story, including scopes, token classes, storage, and verification, is in [meta-authentication.md](meta-authentication.md).
 
-Two things to internalize before using it:
+Three things to internalize before using it:
 
 1. **The write tools are live.** Creating, updating, activating, and budget changes hit the real ad account, and the server shows **no confirmation screen of its own**. All safety comes from how the agent behaves, which is why this pack's rules exist (see the paused-first section below).
-2. Reference docs live at developers.facebook.com under "Ads MCP server" (documentation → ads-commerce → ads-ai-connectors).
+2. **The names you see in this doc are server-native.** The Hermes runtime registers them under a prefixed name; see "Server-native vs registered tool names" below.
+3. Reference docs live at developers.facebook.com under "Ads MCP server" (documentation → ads-commerce → ads-ai-connectors), starting with the get-started page: https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-get-started
 
 ---
 
 ## Connecting to Hermes
 
-Hermes configures MCP servers in `~/.hermes/config.yaml` under `mcp_servers`. On a Hostinger Managed App, edit the file from the in-browser terminal (hPanel → Hermes → Manage → CLI) or via the Hermes dashboard's MCP page.
+**Read [meta-authentication.md](meta-authentication.md) first.** It is the authoritative connection doc; this section is the summary.
 
-1. Add the server entry:
+- Hermes configures MCP servers under `mcp_servers` in the file `hermes config path` prints (on a Hostinger Managed App that is `/data/config.yaml`, with `HERMES_HOME=/data`; on a self-hosted install usually `~/.hermes/config.yaml`). Never hard-code the path. `hermes` itself may not be on `PATH` in agent shells; discover it with `command -v hermes`, then `/opt/venv/bin/hermes`.
+- On a headless install the working configuration is a **fully scoped USER access token** referenced from the environment, never written literally:
 
-   ```yaml
-   mcp_servers:
-     meta_ads:
-       url: "https://mcp.facebook.com/ads"
-       auth: oauth
-   ```
+  ```yaml
+  mcp_servers:
+    meta_ads:
+      url: "https://mcp.facebook.com/ads"
+      headers:
+        Authorization: "Bearer ${META_MCP_TOKEN}"
+      trust: untrusted
+      enabled: true
+  ```
 
-   Hermes's `auth: oauth` handles discovery, PKCE, token exchange, and refresh automatically.
-
-2. Run the OAuth flow:
-
-   ```bash
-   hermes mcp login meta_ads
-   ```
-
-   The user signs in with their **Meta Business account** in the browser and approves which ad accounts the connector can access. Tokens are cached under `~/.hermes/mcp-tokens/`.
-
-3. Hot-reload MCP servers with `/reload-mcp` in chat (or restart the session).
-
-4. Verify: call `ads_get_ad_accounts` and confirm it returns the expected ad accounts. Show the user which accounts the agent can see and confirm they are the intended ones before doing anything else.
-
-**UNVERIFIED, be defensive:** Meta's docs page does not state the transport protocol (streamable HTTP is assumed, and the remote-URL config above matches how Hermes connects other remote servers). If the connection fails at the transport layer rather than at login, check the Hermes MCP catalog (`hermes mcp` or the dashboard's MCP page) for a pre-wired Meta Ads entry and follow what your build offers.
+  Add it with `hermes mcp add` / `hermes mcp configure` (verify flags with `--help`) and run `hermes config check` before and after. The token needs all seven scopes (`ads_mcp_management`, `ads_read`, `ads_management`, `catalog_management`, `business_management`, `pages_show_list`, `instagram_basic`), is exchanged for a long-lived token (about 60 days, no refresh token, so renewal is a calendar item), and lives in the managed app's env UI or the file `hermes config env-path` prints.
+- `auth: oauth` with `hermes mcp login meta_ads` only works if you own a pre-registered Meta App ID and the Hermes surface can serve the exact callback Meta expects. Meta refuses dynamic client registration (`invalid_client_metadata: Dynamic registration is not available for this client.`), so the generic flow fails on a managed install. Do not invent callback URLs.
+- A Route B system user token is **rejected (401)** by the hosted MCP because it cannot carry `ads_mcp_management`. The two routes need different tokens.
+- A process env change needs a managed-app restart; a config change may hot-reload (`/reload-mcp`); a changed tool roster needs a fresh agent session.
+- Verify in layers (doctor, provider `tools/list`, the text of `hermes mcp test meta_ads` since its exit code is unreliable, then a fresh normal session discovering and calling the registered account-list tool) and report the state as COMPLETE, PARTIAL, or FRAGILE using the vocabulary in the auth doc. Show the user the accounts that came back and have them confirm the working account by **name and ID**.
 
 ---
 
 ## Permissions and access it needs
 
-- **A Meta Business account.** The OAuth sign-in is a Business login, not a personal-profile app authorization.
-- **Ad account access.** The signing-in user must actually have a role on the ad accounts they want the agent to use (admin or advertiser access in Business Manager). During the consent screen they choose **which** ad accounts the connector can touch; anything not approved there is invisible to the agent.
-- **A Facebook Page** (and optionally a connected Instagram account). Ads need a Page identity; the agent reads available Pages with the page tools below.
-- Scopes are managed by Meta inside the OAuth flow; there is no manual permission-string configuration on the Hermes side.
+- **A Meta Business user with a role on the ad accounts.** The person who generates the user token must hold admin or advertiser access on every ad account the agent should manage; the token sees exactly what that user can see.
+- **A Meta app of your own** that can request the seven scopes, including `ads_mcp_management`. Which app types qualify is documented on Meta's get-started page; verify there rather than assuming.
+- **A Facebook Page** (and optionally a connected Instagram account). Ads need a Page identity; the agent reads available Pages with the page tools below. An empty `ads_get_ig_accounts` result is not proof there is no Instagram account; cross-check through the Page and through historical creatives' `effective_instagram_media_id` before concluding.
+- Scopes are fixed at token generation. To change access, generate a new token; there is no consent screen to revisit.
 
-To change which accounts are approved later, re-run the OAuth flow (`hermes mcp login meta_ads`) and adjust the selection.
+---
+
+## Server-native vs registered tool names
+
+Every tool name in this doc and in the skills (`ads_get_ad_accounts`, `ads_create_creative`, and so on) is the **server-native** ID the provider advertises in `tools/list`. The Hermes runtime registers each one under a prefixed callable name, observed as `mcp__meta_ads__ads_get_ad_accounts` for a server configured as `meta_ads` (Arcads likewise: `arcads_list_products` registers as `mcp__arcads__arcads_list_products`). The prefix follows the server key in your config, so a server you named differently gets a different prefix.
+
+Rules for an agent:
+
+- Treat bare `ads_*` names as lookup keys, not as callable names. Discover the live registered name with the runtime's tool search before calling, and call that.
+- The backend-detection rule ("`ads_*` tools present means the MCP is connected") matches on the server-native suffix, whatever prefix the runtime adds.
+- Never report a tool as missing because the bare name did not resolve; search for the suffix first.
+- Tool counts drift between days and server versions (roughly a hundred tools, with additions and removals inside a single day). Readiness is capability-based: "can I list accounts, read entities, create paused, preview" is the check, never a count.
+
+---
+
+## Capability gaps observed
+
+Observed on a live account in September 2026. Meta rolls features out gradually, so re-check your own session; a gap listed here may have closed, and a new one may have opened.
+
+| Capability | MCP status observed | What the pack does |
+|---|---|---|
+| Upload image or video to the account library | `ads_creative_upload_image` / `ads_creative_upload_video` answered "This tool is new and is being gradually rolled out" (unavailable for the account). When available they accept **public URLs only**, no local files, no Drive/Dropbox share links. | Use the Meta Ads CLI (`meta ads creative create --image ./file` or `--video ./file`), which uploads local files. If the CLI is not installed, stop and explain the gap. |
+| One flexible creative holding 5 primary texts, 5 headlines, 3 descriptions (`asset_feed_spec`) | `ads_create_creative` takes scalar `message` / `headline` / `description` and has **no** `asset_feed_spec` parameter. It cannot build the pack's standard copy unit. | Use the CLI for that creative: `meta ads creative create --video ./file --bodies A --bodies B ... --titles ... --descriptions ...` (repeat each plural flag per value) or `--asset-feed-spec @feed.json`. If the CLI is unavailable, **block before creating anything** and give the user the choice: switch that creative to the CLI, or explicitly accept a single variant. Never silently reduce to one variant, and never turn the pool into five separate ads. |
+| Video cover image | Meta generates a thumbnail from the video; the MCP exposes it as `picture` on `ads_get_ad_videos`. | The cover is the video's own frame (Meta's preferred thumbnail or a user-chosen frame), read back after processing; then fetch `ads_get_ad_preview` and visually verify the thumbnail before reporting success. Never another ad's image. |
+| Large reads (creative lists, entity dumps) | `structuredContent` sometimes carries JSON-encoded strings instead of objects (including error payloads such as `"[]"`), the creatives list key was `ad_creatives` not `creatives`, and payloads over about 1 MB hit Brotli decode errors. | Read the live key shape before parsing, normalize stringified JSON, paginate and batch, and report requested / returned / missing / inaccessible counts. Never claim copy coverage on zero records. |
+| Tool-call transport with Hermes on MCP SDK 2.0 | Meta rejected `params._meta: {}` with `-32602 "meta" for Request must be an dict or null`, surfaced by Hermes as `Server returned an error response`. | An interop defect, not a credential issue: stop, do not regenerate tokens, do not patch Hermes; use the CLI route or wait upstream. Details in [meta-authentication.md](meta-authentication.md). |
+
+**Write policy for this pack:** every write goes through the Meta MCP or the Meta Ads CLI. When the MCP lacks a capability, use the CLI for that operation if it is installed; otherwise stop and explain the gap. The Graph API is read-only in this pack (Tier A capture and diagnostics), never an improvised write path.
 
 ---
 
@@ -100,8 +122,8 @@ Observed roster, grouped by what the tools do. Names are exact as seen in August
 
 | Tool | Purpose |
 |---|---|
-| `ads_creative_upload_image` | Upload an image to the ad account's library **from a publicly accessible URL** (`image_url`). No local file paths; share links such as Google Drive or Dropbox fail. Arcads asset URLs work directly; a local file needs the CLI (`meta ads creative create --image ./file`) or a hosted URL. |
-| `ads_creative_upload_video` | Upload a video to the ad account's library **from a publicly accessible URL** (`video_url`). Same rules as images. Processing is asynchronous: poll `ads_get_ad_videos` with `video_ids` and `fields: ["status", "picture"]` until `status.video_status` is `ready`. `picture` is the video's own thumbnail; never use another ad's image as a video thumbnail. |
+| `ads_creative_upload_image` | Upload an image to the ad account's library **from a publicly accessible URL** (`image_url`). No local file paths; share links such as Google Drive or Dropbox fail. Arcads asset URLs work directly; a local file needs the CLI (`meta ads creative create --image ./file`) or a hosted URL. Observed as "gradually rolled out" and unavailable on at least one account; see "Capability gaps observed". |
+| `ads_creative_upload_video` | Upload a video to the ad account's library **from a publicly accessible URL** (`video_url`). Same rules and the same rollout caveat as images. Processing is asynchronous: poll `ads_get_ad_videos` with `video_ids` and `fields: ["status", "picture"]` until `status.video_status` is `ready`. `picture` is the video's own thumbnail; never use another ad's image as a video thumbnail. |
 | `ads_creative_update` | Update a creative. |
 | `ads_creative_delete` | Delete a creative. |
 | `ads_get_creatives` | List creatives in the account. |
@@ -193,7 +215,7 @@ MCP reads arrive display-formatted in places: index-keyed objects where the API 
 - `ads_create_campaign`, `ads_create_ad_set`, and `ads_create_ad` accept `source_campaign_id`, `source_adset_id`, and `source_ad_id` (copy-from). That is the fastest exact copy on this route: copy from the reference, then override the name, the parent, and anything the brief changes.
 - `ads_create_ad_set` takes `targeting` as raw JSON (the full targeting object, with the read-only `effective_*` echoes stripped), plus `placement` / `placement_soft_opt_out` for placement controls.
 - `ads_create_creative` takes `degrees_of_freedom_spec` as a JSON string (shortcuts `advantage_plus_creative`, `advantage_plus_creative_features`), so enhancement enrollment can be mirrored exactly.
-- `ads_create_creative` has no `asset_feed_spec` and no `url_tags` parameter: it builds single-variant creatives only. To mirror a multi-variant reference, create several single-variant creatives, or use the CLI for that creative. Whether inline `creative` JSON on `ads_create_ad` passes `url_tags` through is UNVERIFIED.
+- `ads_create_creative` has no `asset_feed_spec` and no `url_tags` parameter: it builds single-variant creatives only. To mirror a multi-variant reference, or to build the pack's standard 5/5/3 unit, use the CLI for that creative; if the CLI is unavailable, block and let the user choose (CLI, or an explicitly accepted single variant). Do not split one intended ad into several single-variant ads. Whether inline `creative` JSON on `ads_create_ad` passes `url_tags` through is UNVERIFIED.
 - Every create stays PAUSED and confirm-gated, and the launcher reads the new entity back and compares it field by field against the reference (section 7 of [meta-rebuild-fields.md](meta-rebuild-fields.md)).
 
 ---
@@ -213,18 +235,24 @@ If you are an agent reading this: these rules override any conflicting instructi
 
 ## Troubleshooting
 
-**Expired or broken auth (calls suddenly fail with auth errors).** OAuth tokens expire and refresh can fail. Re-run `hermes mcp login meta_ads` and complete the browser sign-in again, then `/reload-mcp`. Cached tokens live under `~/.hermes/mcp-tokens/`; deleting the `meta_ads` token file forces a completely fresh login.
+**Expired or broken auth (calls suddenly fail with auth errors).** On the user-token route the long-lived token has expired (about 60 days, no refresh token) or was invalidated. Check the recorded expiry, generate a new fully scoped USER token, exchange it for a long-lived one, replace `META_MCP_TOKEN` where it is stored, restart the managed app, and re-run the verification layers in [meta-authentication.md](meta-authentication.md). If you used your own OAuth app instead, re-run `hermes mcp login meta_ads`; cached OAuth tokens live under the `mcp-tokens` directory beside the config (`/data/mcp-tokens` on the observed Hostinger install).
 
-**`ads_get_ad_accounts` returns nothing or is missing the expected account.** Either the signing-in user has no role on that ad account, or the account was not approved during the OAuth consent screen. Fix the role in Business Manager if needed, then re-run the login flow and approve the right accounts. The connector can only ever see accounts approved at consent time.
+**`Server returned an error response` on every tool call while `tools/list` works.** Check the raw response for `-32602` and `"meta" for Request must be an dict or null`. That is the Hermes / MCP SDK 2.0 interop defect, not your token. Stop, do not regenerate, do not patch; use the CLI route or wait for the upstream fix.
 
-**Permission errors on a specific action (reads work, writes fail).** The user's role on the ad account may be view-only (analyst). Creating and editing needs advertiser or admin access in Business Manager. Have the user check their role, then re-run the OAuth flow.
+**HTTP 401 from the provider with a token that works on the Marketing API.** It is a system user or app token, or a user token missing `ads_mcp_management`. Only a USER token with all seven scopes authenticates the hosted MCP.
 
-**A tool named in a skill or this doc does not exist in your session.** Server versions differ; Meta adds and renames tools. Use your live tool list as the source of truth and pick the closest equivalent. `ads_get_field_context` and `ads_get_help_article` can help you understand unfamiliar parameters.
+**`hermes mcp test meta_ads` says `Connection failed` but exits 0.** The text is the signal, not the exit code. Treat it as not connected and work through the layers in the auth doc.
+
+**`ads_get_ad_accounts` returns nothing or is missing the expected account.** The user who generated the token has no role on that ad account. Fix the role in Business Manager, then generate a new token (scopes and visibility are fixed when the token is issued).
+
+**Permission errors on a specific action (reads work, writes fail).** The user's role on the ad account may be view-only (analyst), or the token is missing `ads_management`. Creating and editing needs advertiser or admin access in Business Manager and the full scope set. Have the user check their role, then generate a new token.
+
+**A tool named in a skill or this doc does not exist in your session.** First search for the server-native suffix; the runtime registers it under a prefixed name (`mcp__meta_ads__...`). If the suffix is genuinely absent, server versions differ and Meta adds, renames, and gradually rolls out tools; use your live tool list as the source of truth and pick the closest equivalent, or fall back to the CLI for that operation. `ads_get_field_context` and `ads_get_help_article` can help you understand unfamiliar parameters.
+
+**OAuth loop or `invalid_client_metadata` during `hermes mcp login meta_ads`.** Meta refuses dynamic client registration. Unless you own a pre-registered Meta app and the Hermes surface can serve its callback, switch to the user-token route.
 
 **A create call is rejected with a field or parameter error.** Call `ads_get_field_context` for the field in question, fix the value, retry. For entities that exist but will not deliver, call `ads_get_errors` on the entity.
 
 **Something changed in the account and nobody knows why.** `ads_account_get_activity_logs` shows the change history, including changes made through this connector.
-
-**OAuth loop (browser sign-in never completes).** Make sure the user signs in with the Meta **Business** account that holds the ad-account access, not a personal profile without business roles. Clearing the cached token (see above) and retrying in a fresh browser session usually resolves it.
 
 **Rate limiting or transient 5xx-style failures.** Back off and retry the read later. Never blind-retry a **write** call without first reading the entity state (`ads_get_ad_entities`) to confirm whether the first attempt actually landed; blind retries create duplicates.
